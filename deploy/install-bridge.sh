@@ -2,12 +2,25 @@
 # 在目标 Linux 主机上部署 rmux-bridge + rmux daemon
 set -euo pipefail
 
-BRIDGE_BINARY="${1:-./target/x86_64-unknown-linux-musl/release/rmux-bridge}"
-REMOTE_HOST="${2:?Usage: $0 <bridge-binary> <user@host>}"
+BRIDGE_BINARY="${1:?Usage: $0 <bridge-binary> <user@host> [<certs-dir>]}"
+REMOTE_HOST="${2:?Usage: $0 <bridge-binary> <user@host> [<certs-dir>]}"
+CERTS_DIR="${3:-certs}"
 REMOTE_DIR="/opt/agent-ops"
 BRIDGE_TOKEN="${BRIDGE_TOKEN:-$(openssl rand -hex 32)}"
 
+HOST_IP=$(echo "$REMOTE_HOST" | cut -d@ -f2 | cut -d: -f1)
+HOST_CERT="$CERTS_DIR/${HOST_IP}.crt"
+HOST_KEY="$CERTS_DIR/${HOST_IP}.key"
+
 echo "=== Deploying rmux-bridge to $REMOTE_HOST ==="
+
+# 0. 检查证书
+if [ ! -f "$HOST_CERT" ] || [ ! -f "$HOST_KEY" ]; then
+    echo "ERROR: Certificate not found for $HOST_IP"
+    echo "  Run: bash deploy/generate-certs.sh $CERTS_DIR $HOST_IP"
+    echo "  Then re-run deploy."
+    exit 1
+fi
 
 # 1. 安装 rmux daemon（如果未安装）
 ssh "$REMOTE_HOST" 'command -v rmux || curl -fsSL https://rmux.io/install.sh | sh'
@@ -18,27 +31,19 @@ ssh "$REMOTE_HOST" "sudo mkdir -p $REMOTE_DIR/certs && sudo chown \$USER:\$USER 
 # 3. 上传 bridge 二进制
 scp "$BRIDGE_BINARY" "$REMOTE_HOST:$REMOTE_DIR/"
 
-# 4. 生成并上传 TLS 证书（含 DNS + IP SAN）
-HOST_IP=$(echo $REMOTE_HOST | cut -d@ -f2 | cut -d: -f1)
-openssl req -x509 -newkey rsa:4096 \
-    -keyout /tmp/bridge-key-$$.pem \
-    -out /tmp/bridge-cert-$$.pem \
-    -days 365 -nodes \
-    -subj "/CN=$HOST_IP" \
-    -addext "subjectAltName=DNS:$HOST_IP,IP:$HOST_IP"
+# 4. 上传主机专属的 TLS 证书
+scp "$HOST_CERT" "$REMOTE_HOST:$REMOTE_DIR/certs/${HOST_IP}.crt"
+scp "$HOST_KEY" "$REMOTE_HOST:$REMOTE_DIR/certs/${HOST_IP}.key"
+ssh "$REMOTE_HOST" "chmod 600 $REMOTE_DIR/certs/${HOST_IP}.key"
 
-scp /tmp/bridge-cert-$$.pem "$REMOTE_HOST:$REMOTE_DIR/certs/bridge.crt"
-scp /tmp/bridge-key-$$.pem "$REMOTE_HOST:$REMOTE_DIR/certs/bridge.key"
-rm -f /tmp/bridge-cert-$$.pem /tmp/bridge-key-$$.pem
-
-# 5. 写入 token 到环境文件（避免 shell 注入）
+# 5. 写入 token
 ssh "$REMOTE_HOST" "echo 'BRIDGE_AUTH_TOKEN=$BRIDGE_TOKEN' | sudo tee $REMOTE_DIR/bridge.env > /dev/null && sudo chmod 600 $REMOTE_DIR/bridge.env"
 
-# 6. 检测正确的 rmux socket 路径
+# 6. 检测 rmux socket 路径
 RMUX_SOCK=$(ssh "$REMOTE_HOST" "ls /tmp/rmux-*/default 2>/dev/null | head -1 || echo '/tmp/rmux-0/default'")
 echo "Detected rmux socket: $RMUX_SOCK"
 
-# 7. 创建 systemd service（使用检测到的 socket 路径）
+# 7. 创建 systemd service
 ssh "$REMOTE_HOST" "sudo tee /etc/systemd/system/rmux-bridge.service" <<SERVICE_EOF
 [Unit]
 Description=RMUX Bridge - TCP/TLS to Unix socket proxy
@@ -50,8 +55,8 @@ EnvironmentFile=/opt/agent-ops/bridge.env
 ExecStart=/opt/agent-ops/rmux-bridge \\
     --listen-addr 0.0.0.0:9778 \\
     --rmux-socket $RMUX_SOCK \\
-    --tls-cert /opt/agent-ops/certs/bridge.crt \\
-    --tls-key /opt/agent-ops/certs/bridge.key
+    --tls-cert /opt/agent-ops/certs/${HOST_IP}.crt \\
+    --tls-key /opt/agent-ops/certs/${HOST_IP}.key
 Restart=always
 RestartSec=5
 
@@ -59,16 +64,18 @@ RestartSec=5
 WantedBy=multi-user.target
 SERVICE_EOF
 
-# 7. 启动服务
+# 8. 启动服务
 ssh "$REMOTE_HOST" "sudo systemctl daemon-reload && sudo systemctl enable --now rmux-bridge"
 
 echo ""
 echo "=== Deployment complete ==="
 echo "Host:     $REMOTE_HOST"
 echo "Token:    $BRIDGE_TOKEN"
+echo "MCP --ca-cert:  $CERTS_DIR/ca.crt"
+echo ""
 echo "Add this to config/hosts.yaml:"
 echo ""
-echo "  - name: $(echo $REMOTE_HOST | cut -d@ -f2 | cut -d. -f1)"
-echo "    bridge_addr: $(echo $REMOTE_HOST | cut -d@ -f2):9778"
+echo "  - name: $(echo "$REMOTE_HOST" | cut -d@ -f2 | cut -d. -f1)"
+echo "    bridge_addr: $(echo "$REMOTE_HOST" | cut -d@ -f2):9778"
 echo "    bridge_token: \"$BRIDGE_TOKEN\""
 echo "    tags: []"

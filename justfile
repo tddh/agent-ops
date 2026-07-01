@@ -60,9 +60,21 @@ clean:
     cargo clean
 
 # ─── 证书 ────────────────────────────
+# 生成 CA 根证书（只需一次）
 certs:
-    bash deploy/generate-certs.sh
+    bash deploy/generate-certs.sh certs
+
+# 为主机签发独立证书
+certs-host host:
+    bash deploy/generate-certs.sh certs {{host}}
 
 # ─── 部署 ────────────────────────────
 deploy host token='{{token}}':
-    BRIDGE_TOKEN="{{token}}" bash deploy/install-bridge.sh ./target/x86_64-unknown-linux-musl/release/rmux-bridge {{host}}
+    bash deploy/generate-certs.sh certs $(echo {{host}} | sed 's/.*@//' | cut -d: -f1)
+    BRIDGE_TOKEN="{{token}}" bash deploy/install-bridge.sh ./target/x86_64-unknown-linux-musl/release/rmux-bridge {{host}} certs
+
+# ─── 推送 ────────────────────────────
+push-all:
+    git push origin master
+    git push gitlab master
+    git push gitee master
