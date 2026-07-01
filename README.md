@@ -6,9 +6,9 @@
 
 ## Why agent-ops?
 
-AI coding agents (OpenCode, Claude Code, Cursor) can reason about your codebase — but they can't SSH into a server to debug a production issue, tail a log, or restart a service. They're stuck describing what you should type, rather than doing it.
+When an AI agent runs commands on your servers, you need two things: **accountability** and **reliability**.
 
-agent-ops bridges this gap. It gives AI agents a **native terminal interface** to any Linux machine: persistent sessions, multi-pane splits, file transfer, and full audit logging — all through the MCP protocol they already speak. Think of it as `kubectl exec` for AI, generalized to any machine and any terminal workflow.
+SSH sessions disappear when the connection drops, leaving no trace of what happened. agent-ops solves both problems: RMUX provides **persistent terminal sessions** that survive disconnections, and a built-in **SQLite audit log** records every operation — who did what, when, and whether it succeeded. All wrapped in a TLS-secured MCP interface that your AI agent already knows how to use.
 
 ## Architecture
 
