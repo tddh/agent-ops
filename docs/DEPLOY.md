@@ -123,13 +123,13 @@ ssh root@<your-bridge-ip> "systemctl status rmux-bridge --no-pager"
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--listen-addr` | `0.0.0.0:9778` | TCP/TLS 监听地址（终端操作） |
-| `--quic-listen-addr` | `0.0.0.0:9778` | QUIC/UDP 监听地址（文件传输），默认与 TCP 同端口 |
+| `--quic-listen-addr` | `0.0.0.0:9778` | QUIC/UDP 监听地址（终端操作 + 文件传输） |
 | `--rmux-socket` | `/tmp/rmux-1000/default` | RMUX daemon Unix socket 路径 |
-| `--tls-cert` | `certs/bridge.crt` | TLS 证书路径 |
-| `--tls-key` | `certs/bridge.key` | TLS 私钥路径 |
+| `--tls-cert` | `certs/<host>.crt` | TLS 证书路径（CA 签发） |
+| `--tls-key` | `certs/<host>.key` | TLS 私钥路径 |
 | `--auth-token` | 环境变量 `BRIDGE_AUTH_TOKEN` | 认证令牌 |
 
-> **QUIC 与 TCP 共享 9778 端口**：TCP 和 UDP 是不同 L4 协议，操作系统按协议类型分别路由，互不干扰。
+> **QUIC/TCP 共享 9778 端口**：MCP client 优先使用 QUIC，UDP 被防火墙阻断时自动降级 TCP/TLS。
 
 ### 6. MCP Server CLI 参数参考
 
