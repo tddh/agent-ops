@@ -244,6 +244,7 @@ async fn drain_file_data(stream: &mut StreamHandle) -> Result<()> {
 pub async fn handle_quic_stream(
     send: quinn::SendStream,
     mut recv: quinn::RecvStream,
+    protocol_proxy: Option<std::sync::Arc<crate::protocol::ProtocolProxy>>,
 ) -> anyhow::Result<()> {
     let mut type_buf = [0u8; 1];
     recv.read_exact(&mut type_buf).await?;
@@ -251,8 +252,13 @@ pub async fn handle_quic_stream(
         0x02 => handle_upload_quic(send, recv).await,
         0x03 => handle_download_quic(send, recv).await,
         t => {
-            tracing::warn!("unknown QUIC stream type: 0x{:02x}", t);
-            Ok(())
+            if let Some(proxy) = protocol_proxy {
+                let adapter = crate::proxy::QuicStreamAdapter { recv, send };
+                crate::proxy::proxy_legacy(t, adapter, &proxy).await
+            } else {
+                tracing::warn!("unknown QUIC stream type: 0x{:02x}", t);
+                Ok(())
+            }
         }
     }
 }

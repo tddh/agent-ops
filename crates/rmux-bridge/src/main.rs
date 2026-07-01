@@ -101,9 +101,11 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("QUIC file transfer listening on {}", quic_addr);
 
         let auth_token = std::sync::Arc::new(quic_config.auth_token.clone());
+        let quic_rmux_socket = Arc::new(quic_config.rmux_socket.clone());
 
         while let Some(incoming) = endpoint.accept().await {
             let token = auth_token.clone();
+            let rmux_socket = quic_rmux_socket.clone();
             tokio::spawn(async move {
                 let conn = match incoming.await {
                     Ok(c) => c,
@@ -126,11 +128,20 @@ async fn main() -> anyhow::Result<()> {
                     return;
                 }
 
+                let protocol_proxy = match ProtocolProxy::connect(&rmux_socket).await {
+                    Ok(p) => Arc::new(p),
+                    Err(e) => {
+                        tracing::error!("QUIC rmux connect failed: {}", e);
+                        return;
+                    }
+                };
+
                 loop {
                     match conn.accept_bi().await {
                         Ok((send, recv)) => {
+                            let proxy = protocol_proxy.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = files::handle_quic_stream(send, recv).await {
+                                if let Err(e) = files::handle_quic_stream(send, recv, Some(proxy)).await {
                                     tracing::warn!("QUIC stream error: {}", e);
                                 }
                             });
