@@ -1,0 +1,28 @@
+[package]
+name = "rmux-bridge"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "rmux-bridge"
+path = "src/main.rs"
+
+[dependencies]
+agent-ops-core.workspace = true
+tokio = { version = "1", features = ["full"] }
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2"
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+anyhow = "1"
+jsonwebtoken = "9"
+rmux-sdk = "0.7"
+regex = "1"
+sha2 = "0.10"
+futures = "0.3"
+quinn = "0.11"
+tokio-yamux = "0.3"

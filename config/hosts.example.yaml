@@ -1,0 +1,43 @@
+hosts:
+  - name: prod-web-01
+    bridge_addr: 10.0.1.10:9778
+    bridge_token: "token-web-01-xxxxxxxx"
+    group: production
+    tags:
+      - web
+      - nginx
+    labels:
+      dc: shanghai
+      rack: a3
+
+  - name: prod-web-02
+    bridge_addr: 10.0.1.11:9778
+    bridge_token: "token-web-02-xxxxxxxx"
+    group: production
+    tags:
+      - web
+      - nginx
+    labels:
+      dc: shanghai
+      rack: a4
+
+  - name: prod-db-01
+    bridge_addr: 10.0.1.20:9778
+    bridge_token: "token-db-01-xxxxxxxx"
+    group: production
+    tags:
+      - database
+      - postgres
+    labels:
+      dc: shanghai
+      rack: b1
+
+  - name: dev-gpu-01
+    bridge_addr: 10.0.2.10:9778
+    bridge_token: "token-gpu-01-xxxxxxxx"
+    group: development
+    tags:
+      - gpu
+      - training
+    labels:
+      dc: beijing

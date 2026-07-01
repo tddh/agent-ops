@@ -1,0 +1,15 @@
+{
+    "mcp": {
+        "agent-ops": {
+            "type": "local",
+            "command": ["/path/to/agent-ops-mcp"],
+            "args": [
+                "--hosts-file",
+                "/path/to/hosts.yaml",
+                "--ca-cert",
+                "/path/to/bridge.crt"
+            ],
+            "enabled": true
+        }
+    }
+}

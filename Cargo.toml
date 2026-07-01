@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "crates/rmux-bridge",
+    "crates/agent-ops-core",
+    "crates/agent-ops-mcp",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+agent-ops-core = { path = "crates/agent-ops-core" }

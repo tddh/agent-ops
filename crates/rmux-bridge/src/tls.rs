@@ -1,0 +1,75 @@
+//! TLS server config loading: reads a PEM certificate chain and private key
+//! from disk and builds a `rustls::ServerConfig` for the bridge listener.
+
+use anyhow::{Context, Result};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::ServerConfig;
+use std::io::BufReader;
+use std::path::Path;
+use std::sync::Arc;
+
+/// Loads the TLS server certificate chain and private key from `cert_path`
+/// and `key_path`, returning an `Arc<ServerConfig>` ready for use with tokio-rustls.
+pub fn load_tls_server_config(cert_path: &Path, key_path: &Path) -> Result<Arc<ServerConfig>> {
+    let certs = load_certs(cert_path)?;
+    let key = load_private_key(key_path)?;
+
+    let config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .context("failed to build TLS server config")?;
+
+    Ok(Arc::new(config))
+}
+
+fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
+    let cert_pem = std::fs::read(path)
+        .with_context(|| format!("failed to read cert file: {}", path.display()))?;
+
+    let mut reader = BufReader::new(&cert_pem[..]);
+    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("failed to parse cert PEM")?;
+
+    if certs.is_empty() {
+        anyhow::bail!("no certificates found in {}", path.display());
+    }
+
+    Ok(certs)
+}
+
+fn load_private_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
+    let key_pem = std::fs::read(path)
+        .with_context(|| format!("failed to read key file: {}", path.display()))?;
+
+    let mut reader = BufReader::new(&key_pem[..]);
+    let key = rustls_pemfile::private_key(&mut reader)
+        .context("failed to parse key PEM")?
+        .context("no private key found")?;
+
+    Ok(key)
+}
+
+/// QUIC TLS server config — reuses same certificate/key as TCP TLS.
+pub fn load_quic_server_config(
+    cert_path: &std::path::Path,
+    key_path: &std::path::Path,
+) -> anyhow::Result<quinn::ServerConfig> {
+    let certs = load_certs(cert_path)?;
+    let key = load_private_key(key_path)?;
+
+    let rustls_config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| anyhow::anyhow!("failed to build QUIC TLS server config: {}", e))?;
+
+    let quic_crypto =
+        quinn::crypto::rustls::QuicServerConfig::try_from(std::sync::Arc::new(rustls_config))
+            .map_err(|e| anyhow::anyhow!("failed to create QUIC crypto config: {}", e))?;
+
+    let mut server_config = quinn::ServerConfig::with_crypto(std::sync::Arc::new(quic_crypto));
+    let transport = std::sync::Arc::get_mut(&mut server_config.transport).unwrap();
+    transport.max_concurrent_bidi_streams(256u32.into());
+
+    Ok(server_config)
+}
