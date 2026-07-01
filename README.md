@@ -6,9 +6,15 @@
 
 ## Why agent-ops?
 
-When an AI agent runs commands on your servers, you need two things: **accountability** and **reliability**.
+AI agents have evolved from "generating commands for humans" to **autonomously operating terminals** — deploying services, diagnosing failures, running long builds and training jobs, all without human intervention. But traditional terminal tools (SSH, tmux) were designed for human interaction, not programmatic API calls. agent-ops is built on **rmux**, turning terminal sessions from a human interface into a programmable resource, with three production-grade layers on top.
 
-SSH sessions disappear when the connection drops, leaving no trace of what happened. agent-ops solves both problems: RMUX provides **persistent terminal sessions** that survive disconnections, and a built-in **SQLite audit log** records every operation — who did what, when, and whether it succeeded. All wrapped in a TLS-secured MCP interface that your AI agent already knows how to use.
+Three problems stand between agent prototypes and production deployment, and existing tools (plain SSH MCP servers, basic tmux wrappers) largely ignore them:
+
+- **Reliability**: Plain SSH drops running processes on disconnect — long-running tasks fail mid-flight. Traditional tmux automation relies on `send-keys + sleep + grep`, where any timing drift breaks the workflow.
+- **Auditability**: When AI operates servers in production, you must trace **who did what, when, on which machine, and with what result**. Most SSH tools lack built-in audit capabilities entirely.
+- **Security boundary**: Handing SSH keys directly to an AI client is a massive attack surface. agent-ops uses Bridge proxy + Token auth + TLS encryption to confine server access to the target host — the AI side never holds server credentials.
+
+The three layers: **Protocol layer** (MCP standard interface, works with any AI client), **Management layer** (multi-host registry, group/tag filtering, broadcast operations), and **Compliance layer** (structured SQLite audit trail, ready for operational traceability). Together they fill the infrastructure gap between agent prototypes and production readiness.
 
 ## Architecture
 
