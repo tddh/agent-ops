@@ -2,8 +2,6 @@
 
 > MCP Server + Bridge，让 AI Agent（OpenCode/Claude Code）远程控制 Linux 主机的交互式终端会话。
 
-[![CI](https://github.com/<org>/agent-ops/actions/workflows/ci.yml/badge.svg)](https://github.com/<org>/agent-ops/actions/workflows/ci.yml)
-
 ## 架构
 
 ```mermaid
