@@ -14,7 +14,7 @@ SSH 连接一断，会话就没了，操作记录也无迹可寻。agent-ops 解
 
 ```mermaid
 graph LR
-    A[AI 客户端] <-->|MCP stdio| B[agent-ops-mcp<br/>macOS/Linux]
+    A[AI 客户端] <-->|MCP stdio| B[agent-ops-mcp<br/>macOS/Linux/Windows]
     B <-->|TLS TCP :9778<br/>终端操作| C[rmux-bridge<br/>Linux 远程主机]
     B <-->|QUIC UDP :9778<br/>文件传输| C
     C <-->|Unix Socket| D[RMUX daemon<br/>基于 tmux]
@@ -28,7 +28,7 @@ graph LR
 
 | 组件 | 运行位置 | 依赖 |
 |------|---------|------|
-| `agent-ops-mcp` | AI 客户端（macOS/Linux） | 无 — 单个二进制即可 |
+| `agent-ops-mcp` | AI 客户端（macOS/Linux/Windows） | 无 — 单个二进制即可 |
 | `rmux-bridge` | 每台目标 Linux 主机 | **RMUX daemon**（`curl -fsSL https://rmux.io/install.sh \| sh`） |
 | RMUX daemon | 每台目标 Linux 主机 | tmux（通常已预装） |
 

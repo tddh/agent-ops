@@ -17,6 +17,10 @@ release-linux:
     CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --target x86_64-unknown-linux-musl --release -p rmux-bridge
     CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --target x86_64-unknown-linux-musl --release -p agent-ops-mcp
 
+# 交叉编译 Windows x86_64（MCP 客户端）
+release-windows:
+    cargo build --target x86_64-pc-windows-msvc --release -p agent-ops-mcp
+
 check-bridge:
     cargo check -p rmux-bridge
 

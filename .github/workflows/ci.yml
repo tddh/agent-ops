@@ -64,3 +64,13 @@ jobs:
           sudo apt-get update && sudo apt-get install -y musl-tools
       - run: cargo build --target x86_64-unknown-linux-musl --release -p rmux-bridge
       - run: cargo build --target x86_64-unknown-linux-musl --release -p agent-ops-mcp
+
+  build-windows:
+    name: Build (Windows x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --release -p agent-ops-mcp -p agent-ops-core
+      - run: cargo test --workspace -p agent-ops-mcp -p agent-ops-core --verbose

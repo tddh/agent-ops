@@ -36,8 +36,9 @@ struct Cli {
 
 fn resolve_audit_db_path(custom: Option<PathBuf>) -> PathBuf {
     custom.unwrap_or_else(|| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        let dir = PathBuf::from(home).join(".agent-ops");
+        let dir = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".agent-ops");
         std::fs::create_dir_all(&dir).ok();
         dir.join("audit.db")
     })

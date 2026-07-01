@@ -14,7 +14,7 @@ SSH sessions disappear when the connection drops, leaving no trace of what happe
 
 ```mermaid
 graph LR
-    A[AI Client] <-->|MCP stdio| B[agent-ops-mcp<br/>macOS/Linux]
+    A[AI Client] <-->|MCP stdio| B[agent-ops-mcp<br/>macOS/Linux/Windows]
     B <-->|TLS TCP :9778<br/>terminal ops| C[rmux-bridge<br/>Linux host]
     B <-->|QUIC UDP :9778<br/>file transfer| C
     C <-->|Unix Socket| D[RMUX daemon<br/>tmux-based]
@@ -28,7 +28,7 @@ graph LR
 
 | Component | Runs on | Depends on |
 |-----------|---------|------------|
-| `agent-ops-mcp` | AI client machine (macOS/Linux) | Nothing — just the binary |
+| `agent-ops-mcp` | AI client machine (macOS/Linux/Windows) | Nothing — just the binary |
 | `rmux-bridge` | Each target Linux host | **RMUX daemon** (`curl -fsSL https://rmux.io/install.sh \| sh`) |
 | RMUX daemon | Each target Linux host | tmux (usually pre-installed) |
 
