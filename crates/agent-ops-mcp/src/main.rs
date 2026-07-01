@@ -90,47 +90,47 @@ async fn main() -> anyhow::Result<()> {
         "tools": [
             {
                 "name": "host_list",
-                "description": "列出所有已知的远程主机及其状态",
+                "description": "List all known remote hosts and their status",
                 "inputSchema": { "type": "object", "properties": {}, "required": [] }
             },
             {
                 "name": "host_filter",
-                "description": "按条件过滤主机（group/tags/labels/name pattern）",
+                "description": "Filter hosts by group, tags, labels, or name glob pattern",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "group": { "type": "string", "description": "按分组过滤" },
-                        "tags": { "type": "array", "items": { "type": "string" }, "description": "同时匹配所有 tag" },
-                        "label_key": { "type": "string", "description": "标签键" },
-                        "label_value": { "type": "string", "description": "标签值" },
-                        "pattern": { "type": "string", "description": "主机名 glob 模式，如 prod-web-*" }
+                        "group": { "type": "string" },
+                        "tags": { "type": "array", "items": { "type": "string" } },
+                        "label_key": { "type": "string" },
+                        "label_value": { "type": "string" },
+                        "pattern": { "type": "string", "description": "Hostname glob, e.g. prod-web-*" }
                     }
                 }
             },
             {
                 "name": "session_create",
-                "description": "在指定主机上创建新的终端会话",
+                "description": "Create a new terminal session on a host. Returns pane_id.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "host": { "type": "string", "description": "主机名称" },
-                        "session_name": { "type": "string", "description": "会话名称（可选）" }
+                        "host": { "type": "string" },
+                        "session_name": { "type": "string", "description": "Optional, default: agent-ops" }
                     },
                     "required": ["host"]
                 }
             },
             {
                 "name": "session_list",
-                "description": "列出指定主机上的所有活动会话",
+                "description": "List all active sessions on a host",
                 "inputSchema": {
                     "type": "object",
-                    "properties": { "host": { "type": "string", "description": "主机名称" } },
+                    "properties": { "host": { "type": "string" } },
                     "required": ["host"]
                 }
             },
             {
                 "name": "session_attach",
-                "description": "检查会话是否存在（当前仅检查存在性，不执行真正的 attach/detach）",
+                "description": "Check if a session exists (check-only, no real attach)",
                 "inputSchema": {
                     "type": "object",
                     "properties": { "host": { "type": "string" }, "session_name": { "type": "string" } },
@@ -139,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "session_detach",
-                "description": "检查会话是否存在（当前仅检查存在性，不执行真正的 attach/detach）",
+                "description": "Check if a session exists (check-only, no real detach)",
                 "inputSchema": {
                     "type": "object",
                     "properties": { "host": { "type": "string" }, "session_name": { "type": "string" } },
@@ -148,35 +148,35 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "send_keys",
-                "description": "向终端窗格发送按键。支持特殊键：Ctrl-C=\\x03, Enter=\\n, Tab=\\t, Escape=\\x1b。普通文本请用 send_text",
+                "description": "Send keystrokes to a pane. Special keys: Ctrl-C=\\x03, Enter=\\n, Tab=\\t, Escape=\\x1b. Use send_text for plain text.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
                         "pane_id": { "type": "string" },
-                        "keys": { "type": "string", "description": "要发送的按键字符串" }
+                        "keys": { "type": "string" }
                     },
                     "required": ["host", "session_name", "pane_id", "keys"]
                 }
             },
             {
                 "name": "capture_pane",
-                "description": "捕获终端窗格的文本内容（默认返回最后 200 行，设 max_lines=0 返回全部 scrollback）",
+                "description": "Capture pane text (default last 200 lines, max_lines=0 for full scrollback)",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
                         "pane_id": { "type": "string" },
-                        "max_lines": { "type": "integer", "description": "最多返回行数（默认 200，设 0 表示不限制，返回全部 scrollback）" }
+                        "max_lines": { "type": "integer", "description": "Default 200, 0=unlimited" }
                     },
                     "required": ["host", "session_name", "pane_id"]
                 }
             },
             {
                 "name": "wait_for_text",
-                "description": "等待终端窗格中出现指定文本（带超时）",
+                "description": "Wait for specific text to appear in a pane (with timeout)",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -184,43 +184,43 @@ async fn main() -> anyhow::Result<()> {
                         "session_name": { "type": "string" },
                         "pane_id": { "type": "string" },
                         "text": { "type": "string" },
-                        "timeout_ms": { "type": "number", "description": "超时毫秒数，默认 30000" }
+                        "timeout_ms": { "type": "number", "description": "Default 30000" }
                     },
                     "required": ["host", "session_name", "pane_id", "text"]
                 }
             },
             {
                 "name": "spawn_command",
-                "description": "在窗格中启动新进程（直接 exec，替换当前进程）。要求 pane 中无运行进程，否则返回错误。如仅需在运行中的 pane 执行命令，请用 exec 工具",
+                "description": "Start a new process in a pane (exec, replaces current process). Pane must be idle. For running panes, use exec instead.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
                         "pane_id": { "type": "string" },
-                        "command": { "type": "string", "description": "要执行的命令" },
-                        "args": { "type": "array", "items": { "type": "string" }, "description": "命令参数" }
+                        "command": { "type": "string" },
+                        "args": { "type": "array", "items": { "type": "string" }, "description": "Command arguments" }
                     },
                     "required": ["host", "session_name", "pane_id", "command"]
                 }
             },
             {
                 "name": "shell_command",
-                "description": "通过 shell 在窗格中执行命令（/bin/sh -c）。要求 pane 中无运行进程，否则返回错误。如仅需在运行中的 pane 执行命令，请用 exec 工具",
+                "description": "Run a command via /bin/sh -c in a pane. Pane must be idle. For running panes, use exec instead.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
                         "pane_id": { "type": "string" },
-                        "command": { "type": "string", "description": "要执行的 shell 命令" }
+                        "command": { "type": "string" }
                     },
                     "required": ["host", "session_name", "pane_id", "command"]
                 }
             },
             {
                 "name": "respawn_pane",
-                "description": "重启窗格进程（默认选项）。用于 pane 中进程已退出或需要重置 shell 环境时",
+                "description": "Respawn a pane process (restart default shell). Use when process has exited or shell needs reset.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -233,34 +233,34 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "wait_exit",
-                "description": "等待窗格中进程退出并返回退出状态",
+                "description": "Wait for a pane process to exit and return exit status",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
                         "pane_id": { "type": "string" },
-                        "timeout_ms": { "type": "number", "description": "超时毫秒数，默认 30000" }
+                        "timeout_ms": { "type": "number", "description": "Default 30000" }
                     },
                     "required": ["host", "session_name", "pane_id"]
                 }
             },
             {
                 "name": "split_window",
-                "description": "在会话中创建新窗口（空窗口，不含额外 pane）。如需 pane 左右/上下分屏，请用 split_pane。direction 参数当前无效，仅用于兼容",
+                "description": "Create a new empty window in a session. Use split_pane for pane-level splits. direction param currently unused.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
-                        "direction": { "type": "string", "description": "horizontal 或 vertical" }
+                        "direction": { "type": "string", "description": "horizontal or vertical (currently ignored)" }
                     },
                     "required": ["host", "session_name"]
                 }
             },
             {
                 "name": "stream_pane",
-                "description": "【当前不可用 — MCP 协议不支持服务端推送】订阅窗格输出流。替代方案：用 send_keys 发送命令，然后用 capture_pane 多次轮询获取新输出",
+                "description": "[UNAVAILABLE] MCP does not support server push. Use send_keys + capture_pane polling instead.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -273,22 +273,22 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "file_upload",
-                "description": "上传文件或目录到远程主机（通过 bridge TLS 通道）。目标目录不存在时自动创建。支持通过 overwrite 控制覆盖策略（overwrite/skip/rename/error），通过 exclude 排除文件（glob 模式）。\n⚠️ 除非用户明确指定，不要自作主张添加 exclude 或修改 overwrite。用户说传什么就传什么，不明白就二次确认。",
+                "description": "Upload files/directories to remote host. Auto-creates target dirs. overwrite: overwrite(default)|skip|rename|error. exclude: glob patterns. ⚠️ Do NOT add exclude/overwrite unless user explicitly requests.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "local_path": { "type": "string" },
                         "remote_path": { "type": "string" },
-                        "overwrite": { "type": "string", "description": "覆盖策略: overwrite(默认,覆盖) | skip(跳过已存在) | rename(重命名) | error(存在则报错)" },
-                        "exclude": { "type": "array", "items": { "type": "string" }, "description": "glob 排除模式, 如 [\"*.log\", \"target/**/*\"]。仅用户明确指定时传入" }
+                        "overwrite": { "type": "string", "description": "overwrite|skip|rename|error (default: overwrite)" },
+                        "exclude": { "type": "array", "items": { "type": "string" }, "description": "Glob patterns, e.g. [\"*.log\"]. Only if user specifies." }
                     },
                     "required": ["host", "local_path", "remote_path"]
                 }
             },
             {
                 "name": "file_download",
-                "description": "从远程主机下载文件（通过 bridge TLS 通道）。返回文件大小和 SHA256 校验值。\n⚠️ 除非用户明确指定，不要添加额外过滤或修改路径。用户说下载什么就下载什么，不明白就二次确认。",
+                "description": "Download a file from remote host. Returns size and SHA256. ⚠️ Do NOT modify paths or add filters unless user explicitly requests.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -301,148 +301,148 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "exec",
-                "description": "在远程终端执行命令并返回结构化结果（一步完成：发送命令→等待完成→捕获输出→清洗文本，默认返回最后 200 行）。内部用 sentinel 等待命令结束，超时返回失败。适用于一次性会自行退出的命令（ls, cat, grep, systemctl, kubectl, apt-get, curl 等）。不适用于交互式程序（vim, htop, less）和不自动退出的命令（tail -f, nc -l, ping）。对不自动退出的命令，请用 send_keys 发送，然后用 wait_for_text/capture_pane 观察输出，用 send_keys(\"\\x03\") 发送 Ctrl-C 中断。",
+                "description": "One-shot command execution: send command → wait for exit → capture output → clean text (default 200 lines, 30s timeout). For self-terminating commands (ls, cat, grep, systemctl, kubectl, curl). NOT for interactive programs (vim, htop) or non-terminating commands (tail -f, ping). Use send_keys + capture_pane for those.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "host": { "type": "string", "description": "主机名称" },
-                        "session_name": { "type": "string", "description": "会话名称" },
-                        "pane_id": { "type": "string", "description": "窗格 ID，如 %4" },
-                        "command": { "type": "string", "description": "要执行的命令" },
-                        "timeout_ms": { "type": "number", "description": "超时毫秒数，默认 30000" },
-                        "max_lines": { "type": "integer", "description": "最多返回行数（默认 200，设 0 表示不限制）" },
-                        "clear_screen": { "type": "boolean", "description": "执行前是否清屏（默认 false）" }
+                        "host": { "type": "string" },
+                        "session_name": { "type": "string" },
+                        "pane_id": { "type": "string" },
+                        "command": { "type": "string" },
+                        "timeout_ms": { "type": "number", "description": "Default 30000" },
+                        "max_lines": { "type": "integer", "description": "Default 200, 0=unlimited" },
+                        "clear_screen": { "type": "boolean", "description": "Clear pane before running" }
                     },
                     "required": ["host", "session_name", "pane_id", "command"]
                 }
             },
             {
                 "name": "split_pane",
-                "description": "在当前窗格内分屏，返回新 pane 的 ID。horizontal=上下分屏，vertical=左右分屏",
+                "description": "Split current pane. horizontal=split top/bottom, vertical=split left/right. Returns new pane_id.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
-                        "pane_id": { "type": "string", "description": "要分割的窗格 ID" },
-                        "direction": { "type": "string", "description": "horizontal=上下分屏, vertical=左右分屏" }
+                        "pane_id": { "type": "string" },
+                        "direction": { "type": "string", "description": "horizontal or vertical" }
                     },
                     "required": ["host", "session_name", "pane_id", "direction"]
                 }
             },
             {
                 "name": "resize_pane",
-                "description": "调整窗格尺寸（列数 x 行数）",
+                "description": "Resize a pane (cols x rows). Default: 80x24.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
                         "pane_id": { "type": "string" },
-                        "cols": { "type": "integer", "description": "列数（宽度），默认 80" },
-                        "rows": { "type": "integer", "description": "行数（高度），默认 24" }
+                        "cols": { "type": "integer", "description": "Width, default 80" },
+                        "rows": { "type": "integer", "description": "Height, default 24" }
                     },
                     "required": ["host", "session_name", "pane_id"]
                 }
             },
             {
                 "name": "send_text",
-                "description": "向终端窗格发送纯文本。与 send_keys 的区别：send_text 适合发普通命令，send_keys 适合发特殊键（Ctrl-C 等）",
+                "description": "Send plain text to a pane. Unlike send_keys, does NOT interpret special key sequences.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
                         "pane_id": { "type": "string" },
-                        "text": { "type": "string", "description": "要发送的文本" }
+                        "text": { "type": "string" }
                     },
                     "required": ["host", "session_name", "pane_id", "text"]
                 }
             },
             {
                 "name": "set_pane_title",
-                "description": "设置窗格标题",
+                "description": "Set pane title",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
                         "pane_id": { "type": "string" },
-                        "title": { "type": "string", "description": "新标题" }
+                        "title": { "type": "string" }
                     },
                     "required": ["host", "session_name", "pane_id", "title"]
                 }
             },
             {
                 "name": "find_pane_text",
-                "description": "在窗格可见文本中搜索指定内容，返回匹配位置",
+                "description": "Search pane visible text, return first match position",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
                         "pane_id": { "type": "string" },
-                        "pattern": { "type": "string", "description": "搜索模式" }
+                        "pattern": { "type": "string" }
                     },
                     "required": ["host", "session_name", "pane_id", "pattern"]
                 }
             },
             {
                 "name": "broadcast_keys",
-                "description": "向同一会话中的多个 pane 同时发送相同按键。支持特殊键（同 send_keys）",
+                "description": "Send same keystrokes to multiple panes simultaneously. Supports special keys like send_keys.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
-                        "pane_ids": { "type": "array", "items": { "type": "string" }, "description": "目标 pane ID 列表" },
-                        "keys": { "type": "string", "description": "要发送的按键" }
+                        "pane_ids": { "type": "array", "items": { "type": "string" }, "description": "Target pane IDs, e.g. [\"%0\", \"%4\"]" },
+                        "keys": { "type": "string" }
                     },
                     "required": ["host", "session_name", "pane_ids", "keys"]
                 }
             },
             {
                 "name": "cmd_escape",
-                "description": "直接调用 rmux 命令行工具（如 list-sessions、list-panes）。当 bridge 协议未覆盖某些操作时使用",
+                "description": "Direct rmux CLI access for operations not covered by other tools. Returns stdout, stderr, exit_code.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
-                        "args": { "type": "array", "items": { "type": "string" }, "description": "rmux CLI 参数" }
+                        "args": { "type": "array", "items": { "type": "string" }, "description": "rmux CLI arguments" }
                     },
                     "required": ["host", "args"]
                 }
             },
             {
                 "name": "close_pane",
-                "description": "关闭终端窗格（杀死 pane 进程）",
+                "description": "Close a pane (kill the process)",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
-                        "pane_id": { "type": "string", "description": "窗格 ID，如 %4" }
+                        "pane_id": { "type": "string" }
                     },
                     "required": ["host", "session_name", "pane_id"]
                 }
             },
             {
                 "name": "rename_window",
-                "description": "重命名窗口",
+                "description": "Rename a window",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
                         "window_index": { "type": "integer" },
-                        "name": { "type": "string", "description": "新名称" }
+                        "name": { "type": "string" }
                     },
                     "required": ["host", "session_name", "window_index", "name"]
                 }
             },
             {
                 "name": "list_window_panes",
-                "description": "列出窗口中所有窗格",
+                "description": "List all panes in a window",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -455,22 +455,22 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "resize_window",
-                "description": "调整窗口尺寸",
+                "description": "Resize a window (width, height optional)",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
                         "window_index": { "type": "integer" },
-                        "width": { "type": "integer", "description": "宽度（可选）" },
-                        "height": { "type": "integer", "description": "高度（可选）" }
+                        "width": { "type": "integer" },
+                        "height": { "type": "integer" }
                     },
                     "required": ["host", "session_name", "window_index"]
                 }
             },
             {
                 "name": "select_window",
-                "description": "将指定窗口设为活跃窗口",
+                "description": "Set a window as active",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -483,34 +483,34 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "select_layout",
-                "description": "应用窗口布局（even-horizontal, even-vertical, main-horizontal, main-vertical, tiled）",
+                "description": "Apply window layout: even-horizontal, even-vertical, main-horizontal, main-vertical, tiled",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
                         "window_index": { "type": "integer" },
-                        "layout": { "type": "string", "description": "布局名称" }
+                        "layout": { "type": "string" }
                     },
                     "required": ["host", "session_name", "window_index", "layout"]
                 }
             },
             {
                 "name": "close_window",
-                "description": "关闭终端窗口（杀死 window 及其所有 pane）",
+                "description": "Close a window (kills all panes within)",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
-                        "window_index": { "type": "integer", "description": "窗口索引（从 0 开始）" }
+                        "window_index": { "type": "integer", "description": "0-based index" }
                     },
                     "required": ["host", "session_name", "window_index"]
                 }
             },
             {
                 "name": "kill_session",
-                "description": "销毁整个终端会话",
+                "description": "Destroy an entire terminal session (all windows and panes)",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -522,7 +522,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "pane_info",
-                "description": "获取窗格的详细信息（ID、尺寸、命令、工作目录等）",
+                "description": "Get pane details: ID, size, command, working directory, tags",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -535,7 +535,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "window_info",
-                "description": "获取窗口的详细信息（名称、尺寸、索引）。需列出窗格请用 list_window_panes",
+                "description": "Get window details: name, size, index. Use list_window_panes to enumerate panes.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -548,7 +548,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "pane_exists",
-                "description": "检查指定窗格是否存在",
+                "description": "Check if a pane exists",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -612,7 +612,7 @@ async fn run_mcp_stdio_loop(ctx: Arc<tools::ToolContext>, tools_def: Value) -> a
                     "protocolVersion": "2024-11-05",
                     "capabilities": { "tools": {} },
                     "serverInfo": { "name": "agent-ops-mcp", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "你是通过 agent-ops 管理远程主机的 AI Agent。\n\n## 核心规则\n1. 如果目标主机名在 agent-ops 配置中（用 host_list 查看），所有操作必须通过 agent-ops 工具执行，禁止手动运行 ssh/scp/rsync 等命令。\n2. 默认会话名: \"agent-ops\"。操作前先检查该会话是否存在（session_attach），如不存在则创建（session_create host=xxx session_name=\"agent-ops\"）。\n3. 文件传输用 file_upload / file_download，不要用 scp。\n4. 命令执行用 exec（自动等待退出）或 send_keys（交互式程序）。\n\n## 工作流\n- 先 host_list 确认目标主机\n- session_attach host=xxx session_name=\"agent-ops\" → 不存在则 session_create\n- 用 exec / send_keys 执行命令，用 capture_pane 查看输出"
+                    "instructions": "You are an AI agent managing remote Linux hosts via agent-ops. 你是通过 agent-ops 运维远程主机的 AI Agent。\n\n## Rules\n1. If a host is in the agent-ops registry (`host_list`), ALL operations MUST use agent-ops tools. NEVER run ssh/scp/rsync directly.\n2. Default session: `\"agent-ops\"`. Always `session_attach` first; `session_create` if not found.\n3. File transfer: `file_upload` / `file_download`. Commands: `exec` for one-shot (auto-waits, default 200 lines / 30s timeout, set `max_lines=0` for everything), `send_keys` for interactive programs.\n4. Use `wait_for_text` to block until a pattern appears — do NOT poll `capture_pane` in a loop.\n5. `stream_pane` is unavailable (MCP limitation). `session_attach`/`session_detach` only check existence, they don't attach/detach.\n\n## Workflow\n`host_list` → `session_attach host=<h> session_name=\"agent-ops\"` (or `session_create`) → `exec`/`send_keys` → `capture_pane`/`wait_for_text` → `close_pane` to clean up.\n- Default pane after session_create: `%0`.\n- `exec` supports `clear_screen: true` and `timeout_ms` for long commands.\n- After closing a pane: `respawn_pane` to restart the shell.\n- `cmd_escape` for direct rmux CLI access (advanced)."
                 }))
             }
             _ => json_rpc_error(id, -32601, &format!("Method not found: {method}")),

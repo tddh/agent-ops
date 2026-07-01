@@ -107,7 +107,7 @@ async fn host_filter(ctx: &ToolContext, args: Value) -> Result<Value> {
 
 async fn session_create(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
-    let session_name = args["session_name"].as_str().unwrap_or("agent-session");
+    let session_name = args["session_name"].as_str().unwrap_or("agent-ops");
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
 
     let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
