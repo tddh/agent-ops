@@ -32,4 +32,8 @@ pub struct BridgeConfig {
     /// since TCP and UDP use separate protocol stacks.
     #[arg(long, default_value = "0.0.0.0:9778", env = "QUIC_LISTEN_ADDR")]
     pub quic_listen_addr: String,
+
+    /// Maximum concurrent connections (TCP + QUIC each). 0 = unlimited.
+    #[arg(long, default_value = "256", env = "MAX_CONNECTIONS")]
+    pub max_connections: usize,
 }

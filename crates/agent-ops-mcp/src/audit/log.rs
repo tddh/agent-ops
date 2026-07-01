@@ -23,7 +23,10 @@ impl AuditDb {
                     event.session_name,
                     event.pane_id,
                     serde_json::to_string(&event.action)
-                        .unwrap()
+                        .unwrap_or_else(|e| {
+                            tracing::error!("failed to serialize audit action: {}", e);
+                            format!("{:?}", event.action)
+                        })
                         .trim_matches('"')
                         .to_string(),
                     event.detail,

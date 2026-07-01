@@ -732,7 +732,7 @@ async fn audit(
     duration_ms: u64,
     error_message: Option<&str>,
 ) {
-    let agent_name = ctx.agent_name.lock().unwrap().clone();
+    let agent_name = ctx.agent_name.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let event = AuditEvent {
         event_id: Uuid::new_v4(),
         timestamp: Utc::now(),

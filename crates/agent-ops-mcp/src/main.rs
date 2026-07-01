@@ -608,7 +608,7 @@ async fn run_mcp_stdio_loop(ctx: Arc<tools::ToolContext>, tools_def: Value) -> a
                     .as_str()
                     .unwrap_or("unknown")
                     .to_string();
-                *ctx.agent_name.lock().unwrap() = agent_name;
+                *ctx.agent_name.lock().unwrap_or_else(|e| e.into_inner()) = agent_name;
                 json_rpc_response(id, &json!({
                     "protocolVersion": "2024-11-05",
                     "capabilities": { "tools": {} },

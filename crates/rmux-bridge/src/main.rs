@@ -11,6 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 use tokio_rustls::TlsAcceptor;
 use tokio_yamux::{Config, Session, StreamHandle};
 
@@ -39,6 +40,12 @@ async fn main() -> anyhow::Result<()> {
 
     let config = config::BridgeConfig::parse();
     tracing::info!("rmux-bridge starting on {}", config.listen_addr);
+
+    let conn_limit = if config.max_connections > 0 {
+        Some(Arc::new(Semaphore::new(config.max_connections)))
+    } else {
+        None
+    };
 
     let tls_config = tls::load_tls_server_config(&config.tls_cert, &config.tls_key)?;
     let acceptor = TlsAcceptor::from(tls_config);
@@ -76,7 +83,9 @@ async fn main() -> anyhow::Result<()> {
 
     // ─── QUIC file transfer listener ───
     let quic_config = config.clone();
+    let quic_conn_limit_pre = conn_limit.clone();
     tokio::spawn(async move {
+        let conn_limit = quic_conn_limit_pre;
         let tls_cfg = match tls::load_quic_server_config(&quic_config.tls_cert, &quic_config.tls_key) {
             Ok(c) => c,
             Err(e) => {
@@ -102,11 +111,22 @@ async fn main() -> anyhow::Result<()> {
 
         let auth_token = std::sync::Arc::new(quic_config.auth_token.clone());
         let quic_rmux_socket = Arc::new(quic_config.rmux_socket.clone());
+        let quic_conn_limit = conn_limit.clone();
 
         while let Some(incoming) = endpoint.accept().await {
+            let _permit = if let Some(ref lim) = quic_conn_limit {
+                match lim.clone().acquire_owned().await {
+                    Ok(p) => Some(p),
+                    Err(_) => break,
+                }
+            } else {
+                None
+            };
+
             let token = auth_token.clone();
             let rmux_socket = quic_rmux_socket.clone();
             tokio::spawn(async move {
+                let _permit = _permit;
                 let conn = match incoming.await {
                     Ok(c) => c,
                     Err(e) => {
@@ -164,6 +184,7 @@ async fn main() -> anyhow::Result<()> {
 
     let auth_token = Arc::new(config.auth_token.clone());
     let rmux_socket = Arc::new(config.rmux_socket.clone());
+    let tcp_conn_limit = conn_limit.clone();
 
     loop {
         let (tcp_stream, peer_addr) = match listener.accept().await {
@@ -179,8 +200,16 @@ async fn main() -> anyhow::Result<()> {
         let acceptor = acceptor.clone();
         let auth_token = auth_token.clone();
         let rmux_socket = rmux_socket.clone();
+        let tcp_lim = tcp_conn_limit.clone();
 
         tokio::spawn(async move {
+            let _permit = if let Some(lim) = tcp_lim {
+                Some(lim.acquire_owned().await.unwrap_or_else(|_| {
+                    unreachable!("semaphore closed")
+                }))
+            } else {
+                None
+            };
             let mut tls_stream = match acceptor.accept(tcp_stream).await {
                 Ok(s) => s,
                 Err(e) => {
