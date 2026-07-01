@@ -4,6 +4,12 @@
 
 [English](README.md)
 
+## 为什么需要 agent-ops？
+
+AI 编程助手（OpenCode、Claude Code、Cursor）能读懂你的代码，但它们没法 SSH 到服务器上排查线上问题、看日志、重启服务。它们只能告诉你该敲什么命令，而不能亲自执行。
+
+agent-ops 填上了这个缺口。它通过 MCP 协议为 AI Agent 提供了一套完整的**远程终端操作接口**：持久会话、多窗格分屏、文件传输、操作审计——让你对 AI 说"帮我查一下 tf01 上 nginx 为什么 502"，它就能真的去做，而不是只给你一段 bash 脚本。
+
 ## 架构
 
 ```mermaid
