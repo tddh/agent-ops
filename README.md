@@ -1,6 +1,6 @@
 # agent-ops
 
-> MCP Server + Bridge — let AI agents remotely control Linux terminal sessions.
+> Secure infrastructure for AI agents operating Linux hosts — persistent terminal sessions powered by rmux, full-chain audit logging, MCP-native interface for all major AI clients, with file transfer and multi-host orchestration.
 
 [中文文档](README.zh.md)
 
@@ -21,8 +21,7 @@ The three layers: **Protocol layer** (MCP standard interface, works with any AI 
 ```mermaid
 graph LR
     A[AI Client] <-->|MCP stdio| B[agent-ops-mcp<br/>macOS/Linux/Windows]
-    B <-->|TLS TCP :9778<br/>terminal ops| C[rmux-bridge<br/>Linux host]
-    B <-->|QUIC UDP :9778<br/>file transfer| C
+    B <-->|QUIC/TCP :9778<br/>terminal ops + file transfer| C[rmux-bridge<br/>Linux host]
     C <-->|Unix Socket| D[RMUX daemon<br/>tmux-based]
 ```
 

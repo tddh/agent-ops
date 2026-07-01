@@ -5,16 +5,15 @@
 ## 架构
 
 ```
-                              TLS (TCP) :9778  — 终端操作
+                               QUIC/TCP :9778  终端操作 + 文件传输
 ┌─────────────────┐  MCP stdio  ┌──────────────┐ ════════════════════════╗ ┌──────────────────┐   Unix Socket  ┌─────────┐
-│  AI 客户端        │◄─────────►│ agent-ops-mcp │   QUIC (UDP) :9778     ║ │   rmux-bridge     │◄─────────────►│  RMUX   │
+│  AI 客户端        │◄─────────►│ agent-ops-mcp │                       ║ │   rmux-bridge     │◄─────────────►│  RMUX   │
 │ (OpenCode/Claude) │            │  (macOS/Linux/Windows) │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ║ │   (Linux 远程主机)  │                │ daemon  │
 └─────────────────┘            └──────────────┘ ════════════════════════╝ └──────────────────┘                └─────────┘
-                              └─── 文件传输 ────┘
 ```
 
 - **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 35 个终端控制工具 + 操作审计 CLI
-- **rmux-bridge**: 部署在每台目标 Linux 主机上，TLS 加密代理 → RMUX daemon。终端操作走 TCP/TLS，文件传输走 QUIC/UDP，两者共享 9778 端口（不同 L4 协议，互不干扰）
+- **rmux-bridge**: 部署在每台目标 Linux 主机上，TLS 加密代理 → RMUX daemon。终端操作与文件传输统一走 QUIC/TCP 双协议，共享 9778 端口（QUIC 优先，UDP 不可用时自动降级 TCP/TLS）
 - **RMUX daemon**: 每个 Linux 主机上的终端多路复用器
 
 ## 前置条件

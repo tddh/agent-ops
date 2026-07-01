@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::audit;
 use crate::router::HostRouter;
-use crate::transport::connect_to_bridge_with_retry;
+use crate::transport::connect_to_bridge_hybrid;
 
 pub struct ToolContext {
     pub router: Arc<HostRouter>,
@@ -110,7 +110,7 @@ async fn session_create(ctx: &ToolContext, args: Value) -> Result<Value> {
     let session_name = args["session_name"].as_str().unwrap_or("agent-ops");
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
 
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
 
     let request = json!({ "type": "new_session", "name": session_name, "detached": true });
     send_json_frame(&mut tls, &request).await?;
@@ -123,7 +123,7 @@ async fn session_create(ctx: &ToolContext, args: Value) -> Result<Value> {
 async fn session_list(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
 
     send_json_frame(&mut tls, &json!({ "type": "list_sessions" })).await?;
     let response = recv_json_frame(&mut tls).await?;
@@ -135,7 +135,7 @@ async fn session_attach(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
 
     send_json_frame(&mut tls, &json!({ "type": "attach_session", "session_name": session_name })).await?;
     let response = recv_json_frame(&mut tls).await?;
@@ -147,7 +147,7 @@ async fn session_detach(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
 
     send_json_frame(&mut tls, &json!({ "type": "detach_session", "session_name": session_name })).await?;
     let response = recv_json_frame(&mut tls).await?;
@@ -161,7 +161,7 @@ async fn send_keys(ctx: &ToolContext, args: Value) -> Result<Value> {
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let keys = args["keys"].as_str().context("missing 'keys'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
 
     send_json_frame(&mut tls, &json!({ "type": "send_keys", "session_name": session_name, "pane_id": pane_id, "keys": keys })).await?;
     let response = recv_json_frame(&mut tls).await?;
@@ -175,7 +175,7 @@ async fn capture_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let max_lines = args["max_lines"].as_u64().map(|v| v as usize).unwrap_or(200);
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
 
     send_json_frame(&mut tls, &json!({ "type": "capture_pane", "session_name": session_name, "pane_id": pane_id, "max_lines": max_lines })).await?;
     let response = recv_json_frame(&mut tls).await?;
@@ -191,7 +191,7 @@ async fn spawn_command(ctx: &ToolContext, args: Value) -> Result<Value> {
     let command = args["command"].as_str().context("missing 'command'")?;
     let cmd_args = args["args"].as_array().cloned().unwrap_or_default();
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "spawn_command", "session_name": session_name, "pane_id": pane_id, "command": command, "args": cmd_args })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::SpawnCommand, host_name, session_name, Some(pane_id), command, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -204,7 +204,7 @@ async fn shell_command(ctx: &ToolContext, args: Value) -> Result<Value> {
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let command = args["command"].as_str().context("missing 'command'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "shell_command", "session_name": session_name, "pane_id": pane_id, "command": command })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::ShellCommand, host_name, session_name, Some(pane_id), command, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -217,7 +217,7 @@ async fn broadcast_keys(ctx: &ToolContext, args: Value) -> Result<Value> {
     let pane_ids = args["pane_ids"].as_array().cloned().unwrap_or_default();
     let keys = args["keys"].as_str().context("missing 'keys'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "broadcast_keys", "session_name": session_name, "pane_ids": pane_ids, "keys": keys })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::BroadcastKeys, host_name, session_name, None, &format!("{} panes: {}", pane_ids.len(), keys), None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -228,7 +228,7 @@ async fn cmd_escape(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let cmd_args = args["args"].as_array().cloned().unwrap_or_default();
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "cmd_escape", "host": host_name, "args": cmd_args })).await?;
     let response = recv_json_frame(&mut tls).await?;
     let stdout = response["stdout"].as_str().or_else(|| response["output"].as_str()).unwrap_or("");
@@ -242,7 +242,7 @@ async fn respawn_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "respawn_pane", "session_name": session_name, "pane_id": pane_id })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::RespawnPane, host_name, session_name, Some(pane_id), "", None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -255,7 +255,7 @@ async fn wait_exit(ctx: &ToolContext, args: Value) -> Result<Value> {
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(30000);
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "wait_exit", "session_name": session_name, "pane_id": pane_id, "timeout_ms": timeout_ms })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::WaitExit, host_name, session_name, Some(pane_id), "", None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -269,7 +269,7 @@ async fn wait_for_text(ctx: &ToolContext, args: Value) -> Result<Value> {
     let text = args["text"].as_str().context("missing 'text'")?;
     let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(30000);
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
 
     send_json_frame(&mut tls, &json!({ "type": "wait_for_text", "session_name": session_name, "pane_id": pane_id, "text": text, "timeout_ms": timeout_ms })).await?;
     let response = recv_json_frame(&mut tls).await?;
@@ -282,7 +282,7 @@ async fn split_window(ctx: &ToolContext, args: Value) -> Result<Value> {
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let direction = args["direction"].as_str().unwrap_or("horizontal");
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
 
     send_json_frame(&mut tls, &json!({ "type": "split_window", "session_name": session_name, "direction": direction })).await?;
     let response = recv_json_frame(&mut tls).await?;
@@ -295,7 +295,7 @@ async fn stream_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
 
     send_json_frame(&mut tls, &json!({ "type": "stream_subscribe", "session_name": session_name, "pane_id": pane_id })).await?;
     recv_json_frame(&mut tls).await
@@ -406,7 +406,7 @@ async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
         .router
         .get(host_name)
         .with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(
+    let mut tls = connect_to_bridge_hybrid(
         &host.bridge_addr,
         &host.bridge_token,
         ctx.ca_cert_path.as_deref(),
@@ -526,7 +526,7 @@ async fn resize_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
     let cols = args["cols"].as_u64().unwrap_or(80);
     let rows = args["rows"].as_u64().unwrap_or(24);
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "resize_pane", "session_name": session_name, "pane_id": pane_id, "cols": cols, "rows": rows })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::ResizePane, host_name, session_name, Some(pane_id), &format!("{}x{}", cols, rows), None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -539,7 +539,7 @@ async fn send_text(ctx: &ToolContext, args: Value) -> Result<Value> {
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let text = args["text"].as_str().context("missing 'text'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "send_text", "session_name": session_name, "pane_id": pane_id, "text": text })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::SendText, host_name, session_name, Some(pane_id), text, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -552,7 +552,7 @@ async fn set_pane_title(ctx: &ToolContext, args: Value) -> Result<Value> {
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let title = args["title"].as_str().context("missing 'title'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "set_pane_title", "session_name": session_name, "pane_id": pane_id, "title": title })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::SetPaneTitle, host_name, session_name, Some(pane_id), title, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -565,7 +565,7 @@ async fn find_pane_text(ctx: &ToolContext, args: Value) -> Result<Value> {
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let pattern = args["pattern"].as_str().context("missing 'pattern'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "find_pane_text", "session_name": session_name, "pane_id": pane_id, "pattern": pattern })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::FindPaneText, host_name, session_name, Some(pane_id), pattern, None, response["found"].as_bool().unwrap_or(false), 0, None).await;
@@ -578,7 +578,7 @@ async fn split_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let direction = args["direction"].as_str().unwrap_or("horizontal");
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "split_pane", "session_name": session_name, "pane_id": pane_id, "direction": direction })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::SplitWindow, host_name, session_name, Some(pane_id), direction, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -590,7 +590,7 @@ async fn close_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "close_pane", "session_name": session_name, "pane_id": pane_id })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::ClosePane, host_name, session_name, Some(pane_id), pane_id, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -602,7 +602,7 @@ async fn close_window(ctx: &ToolContext, args: Value) -> Result<Value> {
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let window_index = args["window_index"].as_u64().unwrap_or(0);
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "close_window", "session_name": session_name, "window_index": window_index })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::CloseWindow, host_name, session_name, None, &format!("win_{}", window_index), None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -615,7 +615,7 @@ async fn rename_window(ctx: &ToolContext, args: Value) -> Result<Value> {
     let window_index = args["window_index"].as_u64().unwrap_or(0);
     let name = args["name"].as_str().context("missing 'name'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "rename_window", "session_name": session_name, "window_index": window_index, "name": name })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::RenameWindow, host_name, session_name, None, &format!("win_{}", window_index), None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -627,7 +627,7 @@ async fn list_window_panes(ctx: &ToolContext, args: Value) -> Result<Value> {
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let window_index = args["window_index"].as_u64().unwrap_or(0);
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "list_window_panes", "session_name": session_name, "window_index": window_index })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::ListWindowPanes, host_name, session_name, None, &format!("win_{}", window_index), None, response["ok"].as_bool().unwrap_or(true), 0, None).await;
@@ -641,7 +641,7 @@ async fn resize_window(ctx: &ToolContext, args: Value) -> Result<Value> {
     let width = args["width"].as_u64().map(|v| v as u16);
     let height = args["height"].as_u64().map(|v| v as u16);
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "resize_window", "session_name": session_name, "window_index": window_index, "width": width, "height": height })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::ResizeWindow, host_name, session_name, None, &format!("win_{}", window_index), None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -653,7 +653,7 @@ async fn select_window(ctx: &ToolContext, args: Value) -> Result<Value> {
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let window_index = args["window_index"].as_u64().unwrap_or(0);
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "select_window", "session_name": session_name, "window_index": window_index })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::SelectWindow, host_name, session_name, None, &format!("win_{}", window_index), None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -666,7 +666,7 @@ async fn select_layout(ctx: &ToolContext, args: Value) -> Result<Value> {
     let window_index = args["window_index"].as_u64().unwrap_or(0);
     let layout = args["layout"].as_str().context("missing 'layout'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "select_layout", "session_name": session_name, "window_index": window_index, "layout": layout })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::SelectLayout, host_name, session_name, None, &format!("win_{}", window_index), None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -677,7 +677,7 @@ async fn kill_session(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "kill_session", "session_name": session_name })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::KillSession, host_name, session_name, None, session_name, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
@@ -689,7 +689,7 @@ async fn pane_info(ctx: &ToolContext, args: Value) -> Result<Value> {
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "pane_info", "session_name": session_name, "pane_id": pane_id })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::PaneInfo, host_name, session_name, Some(pane_id), "", None, response["ok"].as_bool().unwrap_or(true), 0, None).await;
@@ -701,7 +701,7 @@ async fn window_info(ctx: &ToolContext, args: Value) -> Result<Value> {
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let window_index = args["window_index"].as_u64().unwrap_or(0);
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "window_info", "session_name": session_name, "window_index": window_index })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::WindowInfo, host_name, session_name, None, &format!("win_{}", window_index), None, response["ok"].as_bool().unwrap_or(true), 0, None).await;
@@ -713,7 +713,7 @@ async fn pane_exists(ctx: &ToolContext, args: Value) -> Result<Value> {
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_with_retry(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, false).await?;
     send_json_frame(&mut tls, &json!({ "type": "pane_exists", "session_name": session_name, "pane_id": pane_id })).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::PaneExists, host_name, session_name, Some(pane_id), pane_id, None, response["exists"].as_bool().unwrap_or(false), 0, None).await;
