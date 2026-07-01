@@ -24,6 +24,16 @@ graph LR
 - **rmux-bridge** — 部署在每台目标 Linux 主机上的 TLS 加密代理，将 JSON 请求翻译为 RMUX daemon 调用
 - **RMUX daemon** — 每台 Linux 主机上的终端多路复用器（基于 tmux）
 
+**依赖关系：**
+
+| 组件 | 运行位置 | 依赖 |
+|------|---------|------|
+| `agent-ops-mcp` | AI 客户端（macOS/Linux） | 无 — 单个二进制即可 |
+| `rmux-bridge` | 每台目标 Linux 主机 | **RMUX daemon**（`curl -fsSL https://rmux.io/install.sh \| sh`） |
+| RMUX daemon | 每台目标 Linux 主机 | tmux（通常已预装） |
+
+> 💡 部署时 bridge 会自动检测 RMUX socket 路径，无需手动配置。
+
 ## 核心能力
 
 | 能力 | 说明 |

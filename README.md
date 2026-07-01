@@ -24,6 +24,16 @@ graph LR
 - **rmux-bridge** — TLS-encrypted proxy deployed on each target Linux host, translating JSON requests to RMUX daemon calls
 - **RMUX daemon** — Terminal multiplexer on each Linux host (tmux-based)
 
+**Dependencies by component:**
+
+| Component | Runs on | Depends on |
+|-----------|---------|------------|
+| `agent-ops-mcp` | AI client machine (macOS/Linux) | Nothing — just the binary |
+| `rmux-bridge` | Each target Linux host | **RMUX daemon** (`curl -fsSL https://rmux.io/install.sh \| sh`) |
+| RMUX daemon | Each target Linux host | tmux (usually pre-installed) |
+
+> 💡 The bridge auto-detects the RMUX socket path during deployment. Nothing to configure manually.
+
 ## Features
 
 | Feature | Description |
