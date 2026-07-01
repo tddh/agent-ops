@@ -1,54 +1,56 @@
 # agent-ops
 
-> MCP Server + Bridge，让 AI Agent（OpenCode/Claude Code）远程控制 Linux 主机的交互式终端会话。
+> MCP Server + Bridge — let AI agents remotely control Linux terminal sessions.
 
-## 架构
+[中文文档](README.zh.md)
+
+## Architecture
 
 ```mermaid
 graph LR
-    A[AI 客户端] <-->|MCP stdio| B[agent-ops-mcp<br/>macOS/Linux]
-    B <-->|TLS TCP :9778<br/>终端操作| C[rmux-bridge<br/>Linux 远程主机]
-    B <-->|QUIC UDP :9778<br/>文件传输| C
-    C <-->|Unix Socket| D[RMUX daemon<br/>基于 tmux]
+    A[AI Client] <-->|MCP stdio| B[agent-ops-mcp<br/>macOS/Linux]
+    B <-->|TLS TCP :9778<br/>terminal ops| C[rmux-bridge<br/>Linux host]
+    B <-->|QUIC UDP :9778<br/>file transfer| C
+    C <-->|Unix Socket| D[RMUX daemon<br/>tmux-based]
 ```
 
-- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 35 个终端控制工具 + 操作审计 CLI
-- **rmux-bridge** — 部署在每台目标 Linux 主机上的 TLS 加密代理，将 JSON 请求翻译为 RMUX daemon 调用
-- **RMUX daemon** — 每台 Linux 主机上的终端多路复用器（基于 tmux）
+- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 35 terminal control tools + audit CLI
+- **rmux-bridge** — TLS-encrypted proxy deployed on each target Linux host, translating JSON requests to RMUX daemon calls
+- **RMUX daemon** — Terminal multiplexer on each Linux host (tmux-based)
 
-## 核心能力
+## Features
 
-| 能力 | 说明 |
-|------|------|
-| **交互式会话管理** | 创建/销毁/列举会话，多窗格分屏，窗口布局 |
-| **命令执行** | `exec` 一站式执行（sentinel 检测 + exit code 提取），支持交互式程序（send_keys + capture_pane） |
-| **输出等待** | `wait_for_text` 等待终端出现指定文本，`wait_exit` 等待进程退出 |
-| **文件传输** | TLS 通道上传/下载，支持目录递归上传 + 并发 |
-| **多主机编排** | 主机注册表 + 分组/标签/模式过滤，broadcast_keys 多窗格广播 |
-| **操作审计** | SQLite 审计日志，每次工具调用自动记录，支持 CLI 查询/统计/清理 |
+| Feature | Description |
+|---------|-------------|
+| **Session management** | Create/destroy/list sessions, multi-pane splits, window layouts |
+| **Command execution** | `exec` one-shot execution (sentinel detection + exit code), interactive programs via send_keys + capture_pane |
+| **Output waiting** | `wait_for_text` for terminal text, `wait_exit` for process exit |
+| **File transfer** | Upload/download over QUIC, recursive directory upload with concurrency |
+| **Multi-host orchestration** | Host registry with group/tag/label filtering, broadcast_keys for multi-pane |
+| **Audit logging** | SQLite audit logs for every tool call, CLI query/stats/cleanup |
 
-## 快速开始
+## Quick Start
 
-### 构建
+### Build
 
 ```bash
-# 本机构建（macOS 开发）
+# Native build (macOS dev)
 cargo build -p agent-ops-mcp --release
 
-# 交叉编译 bridge（Linux x86_64，静态链接）
+# Cross-compile bridge for Linux x86_64 (static)
 just release-linux
 ```
 
-### 部署 bridge
+### Deploy Bridge
 
 ```bash
-# 一键部署：生成证书、上传二进制、创建 systemd 服务
+# One-shot: generate certs, upload binary, create systemd service
 just deploy host=root@<your-bridge-ip> token=<your-token>
 ```
 
-### 配置主机注册表
+### Host Registry
 
-创建 `config/hosts.yaml`（参考 `config/hosts.example.yaml`）：
+Create `config/hosts.yaml` (see `config/hosts.example.yaml`):
 
 ```yaml
 hosts:
@@ -61,9 +63,9 @@ hosts:
       dc: shanghai
 ```
 
-### 配置 MCP Server
+### MCP Server Config
 
-编辑 `~/.config/opencode/opencode.json`（参考 `config/mcp-config.example.json`）：
+Edit `~/.config/opencode/opencode.json` (see `config/mcp-config.example.json`):
 
 ```json
 {
@@ -74,7 +76,6 @@ hosts:
       "args": [
         "--hosts-file", "/path/to/hosts.yaml",
         "--ca-cert", "/path/to/bridge.crt"
-        // 调试可用 "--insecure" 跳过证书验证（不推荐生产）
       ],
       "enabled": true
     }
@@ -82,52 +83,52 @@ hosts:
 }
 ```
 
-## 安全
+## Security
 
-| 模式 | 触发条件 | 安全等级 |
+| Mode | Trigger | Level |
 |------|---------|:---:|
-| CA 验证 | `--ca-cert /path/to/ca.crt` | ✅ 验证服务器身份，防中间人 |
-| 跳过验证 | `--insecure` flag | ⚠️ 加密但不验证身份（仅调试用） |
-| 拒绝连接 | 既无 CA 又无 --insecure | 🔒 默认行为 |
+| CA verified | `--ca-cert /path/to/ca.crt` | ✅ Server identity verified, MITM-resistant |
+| Skip verify | `--insecure` flag | ⚠️ Encrypted but identity not verified (debug only) |
+| Reject | Neither CA nor --insecure | 🔒 Default |
 
-**生产环境建议**：自建 CA，为每台 bridge 签发证书，MCP server 只持有 CA 根证书。
+**Production**: Run your own CA, issue per-bridge certificates, MCP server holds only the CA root.
 
-## 审计查询
+## Audit
 
 ```bash
-# 查最近操作
+# Recent operations
 agent-ops-mcp audit query --format table
 
-# 查特定主机的命令执行记录
+# Commands on specific host
 agent-ops-mcp audit query --host tf01 --action exec --since 2026-06-01
 
-# 统计概览
+# Statistics
 agent-ops-mcp audit stats
 
-# 手动清理
+# Manual cleanup
 agent-ops-mcp audit cleanup --older-than 30
 ```
 
-审计数据默认存储在 `~/.agent-ops/audit.db`，保留 90 天，上限 500MB。
+Audit data stored at `~/.agent-ops/audit.db`, retained 90 days, max 500 MB.
 
-## 工具列表
+## Tools
 
-共 35 个 MCP 工具，覆盖完整终端生命周期：
+35 MCP tools covering the full terminal lifecycle:
 
-| 类别 | 工具 |
-|------|------|
-| 主机管理 | `host_list`, `host_filter` |
-| 会话管理 | `session_create`, `session_list`, `session_attach`, `session_detach`, `kill_session` |
-| 终端输入 | `send_keys`, `send_text`, `broadcast_keys` |
-| 终端输出 | `capture_pane`, `wait_for_text`, `find_pane_text` |
-| 命令执行 | `exec`, `wait_exit`, `spawn_command`, `shell_command`, `respawn_pane`, `cmd_escape` |
-| 窗格操作 | `split_pane`, `resize_pane`, `set_pane_title`, `close_pane`, `pane_info`, `pane_exists` |
-| 窗口操作 | `split_window`, `close_window`, `rename_window`, `resize_window`, `select_window`, `select_layout`, `window_info`, `list_window_panes` |
-| 文件传输 | `file_upload`, `file_download` |
+| Category | Tools |
+|----------|-------|
+| Host | `host_list`, `host_filter` |
+| Session | `session_create`, `session_list`, `session_attach`, `session_detach`, `kill_session` |
+| Input | `send_keys`, `send_text`, `broadcast_keys` |
+| Output | `capture_pane`, `wait_for_text`, `find_pane_text` |
+| Execution | `exec`, `wait_exit`, `spawn_command`, `shell_command`, `respawn_pane`, `cmd_escape` |
+| Pane | `split_pane`, `resize_pane`, `set_pane_title`, `close_pane`, `pane_info`, `pane_exists` |
+| Window | `split_window`, `close_window`, `rename_window`, `resize_window`, `select_window`, `select_layout`, `window_info`, `list_window_panes` |
+| File | `file_upload`, `file_download` |
 
-完整工具文档见 [docs/TOOLS.md](docs/TOOLS.md)。
+Full docs: [docs/TOOLS.md](docs/TOOLS.md)
 
-## 开发
+## Development
 
 ```bash
 just check       # cargo check --workspace
@@ -137,22 +138,22 @@ just lint        # cargo clippy --workspace -- -D warnings
 just build       # cargo build --workspace
 ```
 
-## 技术栈
+## Tech Stack
 
-- **语言**：Rust 1.85+（edition 2021）
-- **异步运行时**：tokio
-- **TLS**：rustls（无 openssl 依赖）
-- **终端多路复用**：rmux-sdk
-- **审计存储**：rusqlite（bundled SQLite）
-- **MCP 传输**：stdio（JSON-RPC 2.0）
+- **Language**: Rust 1.85+ (edition 2021)
+- **Async runtime**: tokio
+- **TLS**: rustls (no OpenSSL dependency)
+- **Terminal**: rmux-sdk
+- **Audit storage**: rusqlite (bundled SQLite)
+- **MCP transport**: stdio (JSON-RPC 2.0)
 
-## 文档
+## Docs
 
-- [工具文档](docs/TOOLS.md) — 35 个 MCP 工具的完整参数与返回值
-- [部署文档](docs/DEPLOY.md) — 架构、构建、部署、运维、安全
-- [贡献指南](CONTRIBUTING.md)
-- [安全策略](SECURITY.md)
-- [更新日志](CHANGELOG.md)
+- [Tool Reference](docs/TOOLS.md) — 35 MCP tools with parameters and return values
+- [Deployment Guide](docs/DEPLOY.md) — Architecture, build, deploy, operations, security
+- [Contributing](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 
