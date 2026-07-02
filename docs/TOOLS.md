@@ -575,3 +575,54 @@ agent-ops-mcp audit cleanup [--db <path>] [--older-than <days>] [--max-size <mb>
 | 搜索 | `find_pane_text` |
 | 审计查询 | `agent-ops-mcp audit query --host tf01 --action exec --format table` |
 | 审计统计 | `agent-ops-mcp audit stats` |
+| 多机并发执行 | `batch_exec` |
+
+---
+
+## 批量操作
+
+### `batch_exec`
+
+Execute the same command on multiple hosts concurrently. Sends the command to all specified hosts in parallel, waits for each to complete via sentinel polling, captures output per host, and returns results keyed by hostname. Host-level failures (connection refused, timeout) do not affect other hosts. Non-zero exit codes are NOT errors — they are part of the command result. For self-terminating commands only.
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `hosts` | string[] | ✅ | 主机名列表，最多 64 |
+| `command` | string | ✅ | 要在每台主机上执行的命令 |
+| `timeout_ms` | number | | 每台主机超时毫秒数（默认 120000） |
+| `max_lines` | integer | | 每台主机最大返回行数（默认 200，0=不限制） |
+| `concurrency` | integer | | 最大并发连接数（默认 5，0=不限制） |
+
+**返回**
+
+```json
+{
+  "ok": true,
+  "command": "uptime",
+  "total": 3,
+  "success": 2,
+  "failed": 1,
+  "total_duration_ms": 2345,
+  "results": {
+    "tf01": {
+      "ok": true,
+      "output": "12:34:56 up 30 days ...",
+      "exit_code": 0,
+      "duration_ms": 1234
+    },
+    "tf02": {
+      "ok": false,
+      "output": "",
+      "exit_code": null,
+      "duration_ms": 5000,
+      "error": "connect: connection refused"
+    }
+  }
+}
+```
+
+- `results` 以主机名为 key，直接取值不遍历
+- 单台主机故障（连接失败/超时/命令错误）不抛异常，在对应 result 中标记 `ok: false` + `error`
+- `total_duration_ms` 是墙钟时间（所有主机中最长的那台），反映并发效果
+- 非零 exit_code **不** 标记为 error——exit_code 是命令结果，不是执行失败
+- 内部通过 `agent-ops` session 的默认 pane `%0` 执行，行为与 `exec` 一致
