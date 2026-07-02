@@ -437,45 +437,63 @@ async fn recv_json_frame<S: tokio::io::AsyncReadExt + Unpin>(stream: &mut S) -> 
     Ok(serde_json::from_slice(&buf)?)
 }
 
-async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
-    let host_name = args["host"].as_str().context("missing 'host'")?;
-    let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
-    let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
-    let command = args["command"].as_str().context("missing 'command'")?;
-    let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(30000);
-    let max_lines = args["max_lines"].as_u64().map(|v| v as usize).unwrap_or(200);
-    let clear_screen = args["clear_screen"].as_bool().unwrap_or(false);
+/// 单次命令执行的结果，用于 batch 聚合和单机 exec 复用
+struct ExecResult {
+    ok: bool,
+    output: String,
+    exit_code: Option<i32>,
+    duration_ms: u64,
+    error: Option<String>,
+}
 
-    let host = ctx
-        .router
-        .get(host_name)
-        .with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_hybrid(
-        &host.bridge_addr,
-        &host.bridge_token,
-        ctx.ca_cert_path.as_deref(),
-        3,
-        false,
-    )
-    .await?;
-
+/// 在已有 session + pane 中执行一次性命令并等待结果。
+/// 抽取自 `exec` 函数，供 `exec` 和 `batch_exec` 复用。
+/// 不负责建连、建 session、写 audit。
+async fn exec_in_session<S>(
+    stream: &mut S,
+    session_name: &str,
+    pane_id: &str,
+    command: &str,
+    timeout_ms: u64,
+    max_lines: usize,
+) -> ExecResult
+where
+    S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+{
     let marker_id = Uuid::new_v4().to_string();
     let marker_id = &marker_id[..3];
     let start_marker = format!("[{}]", marker_id);
     let sentinel_marker = format!("[{} ", marker_id);
 
-    let prefix = if clear_screen { "clear\n" } else { "" };
-    let keys = format!("\x15{}echo '{}'\n{}\necho \"{}$?]\"\n", prefix, start_marker, command, sentinel_marker);
-    send_json_frame(
-        &mut tls,
-        &json!({ "type": "send_keys", "session_name": session_name, "pane_id": pane_id, "keys": keys }),
-    )
-    .await?;
-    let send_resp = recv_json_frame(&mut tls).await?;
+    let keys = format!("\x15echo '{s}'\n{c}\necho \"{e}$?]\"\n",
+        s = start_marker, c = command, e = sentinel_marker);
+
+    if let Err(e) = send_json_frame(stream, &json!({
+        "type": "send_keys",
+        "session_name": session_name,
+        "pane_id": pane_id,
+        "keys": keys,
+    })).await {
+        return ExecResult {
+            ok: false, output: String::new(), exit_code: None,
+            duration_ms: 0, error: Some(format!("send_keys: {e}")),
+        };
+    }
+
+    let send_resp = match recv_json_frame(stream).await {
+        Ok(r) => r,
+        Err(e) => return ExecResult {
+            ok: false, output: String::new(), exit_code: None,
+            duration_ms: 0, error: Some(format!("send_keys: {e}")),
+        },
+    };
+
     if !send_resp["ok"].as_bool().unwrap_or(false) {
-        let err = send_resp["error"].as_str().unwrap_or("send_keys failed");
-        audit(ctx, AuditAction::Exec, host_name, session_name, Some(pane_id), command, None, false, 0, None).await;
-        return Ok(json!({ "ok": false, "output": "", "exit_code": null, "error": err, "duration_ms": 0 }));
+        let err = send_resp["error"].as_str().unwrap_or("send_keys failed").to_string();
+        return ExecResult {
+            ok: false, output: String::new(), exit_code: None,
+            duration_ms: 0, error: Some(err),
+        };
     }
 
     let start = std::time::Instant::now();
@@ -484,12 +502,26 @@ async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
     let mut poll_interval = std::time::Duration::from_millis(50);
 
     loop {
-        send_json_frame(
-            &mut tls,
-            &json!({ "type": "capture_pane", "session_name": session_name, "pane_id": pane_id, "max_lines": max_lines }),
-        )
-        .await?;
-        let resp = recv_json_frame(&mut tls).await?;
+        if let Err(e) = send_json_frame(stream, &json!({
+            "type": "capture_pane",
+            "session_name": session_name,
+            "pane_id": pane_id,
+            "max_lines": max_lines,
+        })).await {
+            return ExecResult {
+                ok: false, output: last_text, exit_code: None,
+                duration_ms: start.elapsed().as_millis() as u64,
+                error: Some(format!("capture_pane: {e}")),
+            };
+        }
+        let resp = match recv_json_frame(stream).await {
+            Ok(r) => r,
+            Err(e) => return ExecResult {
+                ok: false, output: last_text, exit_code: None,
+                duration_ms: start.elapsed().as_millis() as u64,
+                error: Some(format!("recv: {e}")),
+            },
+        };
         last_text = resp["text"].as_str().unwrap_or("").to_string();
 
         if let Some(pos) = last_text.find(&sentinel_marker) {
@@ -503,30 +535,20 @@ async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
                 .ok();
 
             let output_before_sentinel = &last_text[..pos];
-            // 定位起始标记和结束标记，只取中间的本次命令输出
             let current_output = if let Some(start_pos) = output_before_sentinel.rfind(&start_marker) {
                 let after_start = start_pos + start_marker.len();
                 &output_before_sentinel[after_start..]
             } else {
                 &last_text[..pos]
             };
+
             let output_lines: Vec<&str> = current_output
                 .lines()
                 .filter(|line| {
                     let t = line.trim();
-                    // 跳过 clear 命令回显
-                    if t == "clear" {
-                        return false;
-                    }
-                    // 跳过命令回显行（以 command 开头的行）
-                    if t.starts_with(command) || t == command {
-                        return false;
-                    }
-                    // 跳过 echo sentinel 的回显行
-                    if t.starts_with("echo") && t.contains(&sentinel_marker) {
-                        return false;
-                    }
-                    // 跳过 sentinel 行 ([caf] / [caf 0])
+                    if t == "clear" { return false; }
+                    if t.starts_with(command) || t == command { return false; }
+                    if t.starts_with("echo") && t.contains(&sentinel_marker) { return false; }
                     if t.starts_with('[') && t.len() >= 4
                         && t.as_bytes().get(1).map_or(false, |b| b.is_ascii_hexdigit())
                         && t.as_bytes().get(2).map_or(false, |b| b.is_ascii_hexdigit())
@@ -542,31 +564,68 @@ async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
             let output = output_lines.join("\n").trim().to_string();
             let duration_ms = start.elapsed().as_millis() as u64;
 
-            let output_summary: String = output.chars().take(500).collect();
-            audit(ctx, AuditAction::Exec, host_name, session_name, Some(pane_id), command, Some(&output_summary), exit_code == Some(0), duration_ms, None).await;
-            return Ok(json!({
-                "ok": true,
-                "output": output,
-                "exit_code": exit_code,
-                "duration_ms": duration_ms
-            }));
+            return ExecResult {
+                ok: exit_code == Some(0),
+                output,
+                exit_code,
+                duration_ms,
+                error: None,
+            };
         }
 
         if std::time::Instant::now() >= deadline {
             let duration_ms = start.elapsed().as_millis() as u64;
-            audit(ctx, AuditAction::Exec, host_name, session_name, Some(pane_id), command, None, false, duration_ms, Some("timeout")).await;
-            return Ok(json!({
-                "ok": false,
-                "output": last_text,
-                "exit_code": null,
-                "error": format!("timeout waiting for sentinel after {}ms", timeout_ms),
-                "duration_ms": duration_ms
-            }));
+            return ExecResult {
+                ok: false,
+                output: last_text,
+                exit_code: None,
+                duration_ms,
+                error: Some(format!("timeout waiting for sentinel after {}ms", timeout_ms)),
+            };
         }
 
         tokio::time::sleep(poll_interval).await;
         poll_interval = std::cmp::min(poll_interval * 2, std::time::Duration::from_millis(500));
     }
+}
+
+async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
+    let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
+    let command = args["command"].as_str().context("missing 'command'")?;
+    let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(30000);
+    let max_lines = args["max_lines"].as_u64().map(|v| v as usize).unwrap_or(200);
+    let clear_screen = args["clear_screen"].as_bool().unwrap_or(false);
+
+    let host = ctx.router.get(host_name)
+        .with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(
+        &host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure,
+    ).await?;
+
+    // clear_screen 在 exec_in_session 之前单独处理
+    if clear_screen {
+        let _ = send_json_frame(&mut tls, &json!({
+            "type": "send_keys", "session_name": session_name, "pane_id": pane_id,
+            "keys": "clear\n",
+        })).await;
+        let _ = recv_json_frame(&mut tls).await;
+    }
+
+    let result = exec_in_session(&mut tls, session_name, pane_id, command, timeout_ms, max_lines).await;
+
+    let output_summary: String = result.output.chars().take(500).collect();
+    audit(ctx, AuditAction::Exec, host_name, session_name, Some(pane_id), command,
+        Some(&output_summary), result.ok, result.duration_ms, result.error.as_deref()).await;
+
+    Ok(json!({
+        "ok": result.ok,
+        "output": result.output,
+        "exit_code": result.exit_code,
+        "duration_ms": result.duration_ms,
+        "error": result.error,
+    }))
 }
 
 async fn resize_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
