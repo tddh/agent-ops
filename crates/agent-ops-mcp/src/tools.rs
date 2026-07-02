@@ -735,20 +735,19 @@ async fn batch_exec(ctx: &ToolContext, args: Value) -> Result<Value> {
 
             let session_name = "agent-ops";
 
-            let exists = match session_attach_inner(&mut stream, session_name).await {
-                Ok(resp) => resp.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
-                Err(_) => false,
+            // 创建 session 并获取 pane_id
+            let pane_id = match create_session_inner(&mut stream, session_name).await {
+                Ok(resp) => resp.get("pane_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("%0")
+                    .to_string(),
+                Err(e) => return (host_name, json!({
+                    "ok": false, "output": "", "exit_code": null,
+                    "duration_ms": 0, "error": format!("session_create: {e}"),
+                })),
             };
-            if !exists {
-                if let Err(e) = create_session_inner(&mut stream, session_name).await {
-                    return (host_name, json!({
-                        "ok": false, "output": "", "exit_code": null,
-                        "duration_ms": 0, "error": format!("session_create: {e}"),
-                    }));
-                }
-            }
 
-            let result = exec_in_session(&mut stream, session_name, "%0", &cmd, timeout_ms, max_lines).await;
+            let result = exec_in_session(&mut stream, session_name, &pane_id, &cmd, timeout_ms, max_lines).await;
 
             (host_name, json!({
                 "ok": result.ok && result.error.is_none(),
