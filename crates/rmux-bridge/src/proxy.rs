@@ -31,10 +31,15 @@ where
     let writer = Arc::new(tokio::sync::Mutex::new(writer));
 
     let mut len_buf = [0u8; 4];
+    let mut handled = false;
 
     loop {
         if let Err(e) = reader.read_exact(&mut len_buf).await {
-            tracing::warn!("frame read length error: {e}");
+            if handled {
+                tracing::debug!("client disconnected after {} request(s)", handled as u32);
+            } else {
+                tracing::warn!("frame read length error: {e}");
+            }
             break;
         }
         let len = u32::from_le_bytes(len_buf) as usize;
@@ -46,7 +51,11 @@ where
 
         let mut buf = vec![0u8; len];
         if let Err(e) = reader.read_exact(&mut buf).await {
-            tracing::warn!("frame read body error: {e}");
+            if handled {
+                tracing::debug!("client disconnected during frame body read after {} request(s)", handled as u32);
+            } else {
+                tracing::warn!("frame read body error: {e}");
+            }
             break;
         }
 
@@ -336,6 +345,7 @@ where
         };
 
         send_response(&writer, &response).await?;
+        handled = true;
     }
 
     Ok(())
