@@ -228,37 +228,27 @@ async fn drain_exact(stream: &mut StreamHandle, size: usize) -> Result<()> {
     Ok(())
 }
 
-async fn drain_file_data(stream: &mut StreamHandle) -> Result<()> {
-    let mut buf = vec![0u8; CHUNK_SIZE];
-    loop {
-        match stream.read(&mut buf).await {
-            Ok(0) | Err(_) => return Ok(()),
-            _ => {}
-        }
-    }
-}
-
 // ─── QUIC stream handlers ───
 
 /// QUIC stream dispatcher: read stream type byte, route to handler.
+/// 0x01 = JSON protocol frames (LE32 length prefix), 0x02 = file upload, 0x03 = file download.
 pub async fn handle_quic_stream(
     send: quinn::SendStream,
     mut recv: quinn::RecvStream,
-    protocol_proxy: Option<std::sync::Arc<crate::protocol::ProtocolProxy>>,
+    protocol_proxy: std::sync::Arc<crate::protocol::ProtocolProxy>,
 ) -> anyhow::Result<()> {
     let mut type_buf = [0u8; 1];
     recv.read_exact(&mut type_buf).await?;
     match type_buf[0] {
+        0x01 => {
+            let adapter = crate::proxy::QuicStreamAdapter { recv, send };
+            crate::proxy::proxy_legacy(0x01, adapter, &protocol_proxy).await
+        }
         0x02 => handle_upload_quic(send, recv).await,
         0x03 => handle_download_quic(send, recv).await,
         t => {
-            if let Some(proxy) = protocol_proxy {
-                let adapter = crate::proxy::QuicStreamAdapter { recv, send };
-                crate::proxy::proxy_legacy(t, adapter, &proxy).await
-            } else {
-                tracing::warn!("unknown QUIC stream type: 0x{:02x}", t);
-                Ok(())
-            }
+            tracing::warn!("unknown QUIC stream type: 0x{:02x}", t);
+            Ok(())
         }
     }
 }
@@ -276,7 +266,7 @@ async fn handle_upload_quic(
     let path_len = u16::from_le_bytes(path_len_buf) as usize;
     let mut path = vec![0u8; path_len];
     recv.read_exact(&mut path).await?;
-    let remote_path = String::from_utf8_lossy(&path).to_string();
+    let mut remote_path = String::from_utf8_lossy(&path).to_string();
 
     let mut size_buf = [0u8; 8];
     recv.read_exact(&mut size_buf).await?;
@@ -293,6 +283,27 @@ async fn handle_upload_quic(
         send.write_all(&[0x01]).await?;
         send.write_all(&0u64.to_le_bytes()).await?;
         send.write_all(&[0u8; 32]).await?;
+        send.finish()?;
+        return Ok(());
+    }
+
+    // rename mode: file exists → append .1, .2, etc.
+    if mode == 0x03 {
+        let mut renamed = remote_path.clone();
+        let mut counter = 1u32;
+        while tokio::fs::metadata(&renamed).await.is_ok() {
+            renamed = format!("{}.{}", remote_path, counter);
+            counter += 1;
+        }
+        remote_path = renamed;
+    }
+
+    // no-clobber mode: file exists → error
+    if mode == 0x04 && tokio::fs::metadata(&remote_path).await.is_ok() {
+        send.write_all(&[0x02]).await?;
+        let msg = "file already exists";
+        send.write_all(&(msg.len() as u16).to_le_bytes()).await?;
+        send.write_all(msg.as_bytes()).await?;
         send.finish()?;
         return Ok(());
     }

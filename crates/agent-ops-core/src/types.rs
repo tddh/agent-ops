@@ -83,6 +83,7 @@ pub enum AuditAction {
     FileDownload,
     SessionList,
     HostList,
+    HostFilter,
     Exec,
     ClosePane,
     CloseWindow,
@@ -105,4 +106,5 @@ pub enum AuditAction {
     RespawnPane,
     BroadcastKeys,
     CmdEscape,
+    StreamSubscribe,
 }

@@ -54,6 +54,8 @@ Type=simple
 EnvironmentFile=/opt/agent-ops/bridge.env
 ExecStart=/opt/agent-ops/rmux-bridge \\
     --listen-addr 0.0.0.0:9778 \\
+    --quic-listen-addr 0.0.0.0:9778 \\
+    --max-connections 256 \\
     --rmux-socket $RMUX_SOCK \\
     --tls-cert /opt/agent-ops/certs/${HOST_IP}.crt \\
     --tls-key /opt/agent-ops/certs/${HOST_IP}.key

@@ -361,6 +361,7 @@ impl ProtocolProxy {
         }
     }
 
+    #[allow(dead_code)]
     pub fn handle_file_download_open(
         remote_path: &str,
     ) -> std::result::Result<std::fs::File, serde_json::Value> {

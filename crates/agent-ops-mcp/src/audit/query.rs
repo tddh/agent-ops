@@ -124,22 +124,22 @@ impl AuditDb {
 
     // ── stats() ────────────────────────────────────────────────────────────
 
-    pub async fn stats(&self, _since: Option<String>) -> Result<String> {
+    pub async fn stats(&self, since: Option<String>) -> Result<String> {
         let db = self.conn_ref().clone();
         tokio::task::spawn_blocking(move || -> Result<String> {
             let conn = db.lock().unwrap_or_else(|e| e.into_inner());
 
-            let total: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM audit_events",
-                [],
-                |row| row.get(0),
-            )?;
-
-            let succeeded: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM audit_events WHERE success = 1",
-                [],
-                |row| row.get(0),
-            )?;
+            let (total, succeeded): (i64, i64) = if let Some(ref s) = since {
+                (
+                    conn.query_row("SELECT COUNT(*) FROM audit_events WHERE timestamp >= ?1", [s.as_str()], |r| r.get(0))?,
+                    conn.query_row("SELECT COUNT(*) FROM audit_events WHERE success = 1 AND timestamp >= ?1", [s.as_str()], |r| r.get(0))?,
+                )
+            } else {
+                (
+                    conn.query_row("SELECT COUNT(*) FROM audit_events", [], |r| r.get(0))?,
+                    conn.query_row("SELECT COUNT(*) FROM audit_events WHERE success = 1", [], |r| r.get(0))?,
+                )
+            };
 
             let success_rate = if total > 0 {
                 format!("{:.1}%", succeeded as f64 / total as f64 * 100.0)

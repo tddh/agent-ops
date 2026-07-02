@@ -242,10 +242,13 @@ pub async fn connect_to_bridge_quic(
 
     tracing::info!("QUIC connected and authenticated to {}", bridge_addr);
 
-    let (json_send, json_recv) = conn
+    let (mut json_send, json_recv) = conn
         .open_bi()
         .await
         .context("failed to open QUIC json stream")?;
+
+    // Write 0x01 magic byte to distinguish JSON protocol from file transfer streams
+    json_send.write_all(&[0x01]).await?;
 
     Ok((conn, json_send, json_recv))
 }

@@ -9,7 +9,7 @@ Thanks for your interest in contributing!
 cargo install just
 
 # Clone & build
-git clone https://github.com/<org>/agent-ops.git
+git clone git@github.com:tddh/agent-ops.git
 cd agent-ops
 just check        # Verify compilation
 just test         # Run tests

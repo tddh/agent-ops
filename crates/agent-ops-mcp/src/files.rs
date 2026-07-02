@@ -41,6 +41,7 @@ pub async fn upload_file(
     local_path: &str,
     remote_path: &str,
     ca_cert_path: Option<&str>,
+    insecure: bool,
     overwrite: OverwriteMode,
     exclude: &[String],
 ) -> Result<Vec<FileResult>> {
@@ -49,13 +50,13 @@ pub async fn upload_file(
         .with_context(|| format!("failed to access: {}", local_path))?;
 
     if meta.is_dir() {
-        upload_dir(host, local_path, remote_path, ca_cert_path, overwrite, exclude).await
+        upload_dir(host, local_path, remote_path, ca_cert_path, insecure, overwrite, exclude).await
     } else {
         let size = meta.len() as usize;
         if size > MAX_FILE_SIZE {
             bail!("file too large: {} bytes (max {})", size, MAX_FILE_SIZE);
         }
-        let result = upload_single(host, local_path, remote_path, ca_cert_path, overwrite).await?;
+        let result = upload_single(host, local_path, remote_path, ca_cert_path, insecure, overwrite).await?;
         Ok(vec![result])
     }
 }
@@ -65,13 +66,14 @@ async fn upload_single(
     local_path: &str,
     remote_path: &str,
     ca_cert_path: Option<&str>,
+    insecure: bool,
     overwrite: OverwriteMode,
 ) -> Result<FileResult> {
     let meta = tokio::fs::metadata(local_path).await?;
     let file_size = meta.len();
 
     let (_conn, _auth_send, _auth_recv) = crate::transport::connect_to_bridge_quic(
-        &host.bridge_addr, &host.bridge_token, ca_cert_path, false,
+        &host.bridge_addr, &host.bridge_token, ca_cert_path, insecure,
     ).await?;
 
     let (mut send, mut recv) = _conn.open_bi().await?;
@@ -112,16 +114,17 @@ async fn upload_dir(
     local_path: &str,
     remote_base: &str,
     ca_cert_path: Option<&str>,
+    insecure: bool,
     overwrite: OverwriteMode,
     exclude: &[String],
 ) -> Result<Vec<FileResult>> {
     let base = Path::new(local_path).to_path_buf();
     let mut files = Vec::new();
-    collect_files(&base, &base, remote_base, exclude, &mut files).await?;
+    collect_files(&base, &base, remote_base, exclude, &mut files, 0).await?;
     if files.is_empty() { return Ok(Vec::new()); }
 
     let (conn, _auth_send, _auth_recv) = crate::transport::connect_to_bridge_quic(
-        &host.bridge_addr, &host.bridge_token, ca_cert_path, false,
+        &host.bridge_addr, &host.bridge_token, ca_cert_path, insecure,
     ).await?;
     let conn = Arc::new(conn);
 
@@ -175,7 +178,16 @@ async fn upload_dir(
     for h in handles {
         match h.await? {
             Ok(r) => results.push(r),
-            Err(e) => tracing::warn!("upload failed: {}", e),
+            Err(e) => {
+                tracing::warn!("upload failed: {}", e);
+                results.push(FileResult {
+                    status: "failed".to_string(),
+                    path: String::new(),
+                    size: None,
+                    sha256: None,
+                    error: Some(e.to_string()),
+                });
+            }
         }
     }
     Ok(results)
@@ -186,9 +198,10 @@ pub async fn download_file(
     remote_path: &str,
     local_path: &str,
     ca_cert_path: Option<&str>,
+    insecure: bool,
 ) -> Result<FileResult> {
     let (conn, _auth_send, _auth_recv) = crate::transport::connect_to_bridge_quic(
-        &host.bridge_addr, &host.bridge_token, ca_cert_path, false,
+        &host.bridge_addr, &host.bridge_token, ca_cert_path, insecure,
     ).await?;
 
     let (mut send, mut recv) = conn.open_bi().await?;
@@ -239,7 +252,11 @@ pub async fn download_file(
 async fn collect_files(
     base: &Path, dir: &Path, remote_base: &str,
     exclude: &[String], files: &mut Vec<(PathBuf, String)>,
+    depth: u32,
 ) -> Result<()> {
+    if depth > 64 {
+        return Err(anyhow::anyhow!("directory too deep (>64): {}", dir.display()));
+    }
     let mut entries = tokio::fs::read_dir(dir).await?;
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
@@ -247,7 +264,7 @@ async fn collect_files(
         let remote = format!("{}/{}", remote_base.trim_end_matches('/'), rel);
         if should_exclude(&rel, exclude) { continue; }
         if path.is_dir() {
-            Box::pin(collect_files(base, &path, remote_base, exclude, files)).await?;
+            Box::pin(collect_files(base, &path, remote_base, exclude, files, depth + 1)).await?;
         } else {
             files.push((path, remote));
         }
@@ -291,7 +308,7 @@ mod tests {
 
         let mut files = Vec::new();
         let exclude: Vec<String> = vec!["*.log".into(), ".git/*".into()];
-        collect_files(dir.path(), dir.path(), "/remote", &exclude, &mut files).await.unwrap();
+        collect_files(dir.path(), dir.path(), "/remote", &exclude, &mut files, 0).await.unwrap();
 
         let names: Vec<&str> = files.iter().map(|(_, r)| r.as_str()).collect();
         assert!(names.contains(&"/remote/keep.rs"));

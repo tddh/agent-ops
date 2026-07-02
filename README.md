@@ -25,7 +25,7 @@ graph LR
     C <-->|Unix Socket| D[RMUX daemon<br/>tmux-based]
 ```
 
-- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 35 terminal control tools + audit CLI
+- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 36 terminal control tools + audit CLI
 - **rmux-bridge** — TLS-encrypted proxy deployed on each target Linux host, translating JSON requests to RMUX daemon calls
 - **RMUX daemon** — Terminal multiplexer on each Linux host (tmux-based)
 
@@ -96,13 +96,15 @@ Edit `~/.config/opencode/opencode.json` (see `config/mcp-config.example.json`):
       "command": ["/path/to/agent-ops-mcp"],
       "args": [
         "--hosts-file", "/path/to/hosts.yaml",
-        "--ca-cert", "/path/to/bridge.crt"
+        "--ca-cert", "/path/to/ca.crt"
       ],
       "enabled": true
     }
   }
 }
 ```
+
+> 远程部署使用 `ca.crt`；本地自签名测试可用 `bridge.crt`。
 
 ## Security
 
@@ -134,18 +136,20 @@ Audit data stored at `~/.agent-ops/audit.db`, retained 90 days, max 500 MB.
 
 ## Tools
 
-35 MCP tools covering the full terminal lifecycle:
+36 MCP tools covering the full terminal lifecycle:
 
 | Category | Tools |
 |----------|-------|
 | Host | `host_list`, `host_filter` |
 | Session | `session_create`, `session_list`, `session_attach`, `session_detach`, `kill_session` |
 | Input | `send_keys`, `send_text`, `broadcast_keys` |
-| Output | `capture_pane`, `wait_for_text`, `find_pane_text` |
+| Output | `capture_pane`, `wait_for_text`, `find_pane_text`, `stream_pane` |
 | Execution | `exec`, `wait_exit`, `spawn_command`, `shell_command`, `respawn_pane`, `cmd_escape` |
 | Pane | `split_pane`, `resize_pane`, `set_pane_title`, `close_pane`, `pane_info`, `pane_exists` |
 | Window | `split_window`, `close_window`, `rename_window`, `resize_window`, `select_window`, `select_layout`, `window_info`, `list_window_panes` |
 | File | `file_upload`, `file_download` |
+
+> ⚠️ `stream_pane` 当前不可用 — MCP 协议限制。替代方案：`send_keys` + `capture_pane` 轮询。
 
 Full docs: [docs/TOOLS.md](docs/TOOLS.md)
 
@@ -170,7 +174,7 @@ just build       # cargo build --workspace
 
 ## Docs
 
-- [Tool Reference](docs/TOOLS.md) — 35 MCP tools with parameters and return values
+- [Tool Reference](docs/TOOLS.md) — 36 MCP tools with parameters and return values
 - [Deployment Guide](docs/DEPLOY.md) — Architecture, build, deploy, operations, security
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)

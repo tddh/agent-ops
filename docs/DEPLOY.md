@@ -12,7 +12,7 @@
 └─────────────────┘            └──────────────┘ ════════════════════════╝ └──────────────────┘                └─────────┘
 ```
 
-- **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 35 个终端控制工具 + 操作审计 CLI
+- **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 36 个终端控制工具 + 操作审计 CLI
 - **rmux-bridge**: 部署在每台目标 Linux 主机上，TLS 加密代理 → RMUX daemon。终端操作与文件传输统一走 QUIC/TCP 双协议，共享 9778 端口（QUIC 优先，UDP 不可用时自动降级 TCP/TLS）
 - **RMUX daemon**: 每个 Linux 主机上的终端多路复用器
 
@@ -47,9 +47,9 @@ just build-mcp              # 本机构建 mcp
 - `target/release/agent-ops-mcp` — MCP server（本地运行）
 - `target/x86_64-unknown-linux-musl/release/rmux-bridge` — bridge（部署到远程）
 
-### 2. 生成证书
+### 2. 部署 bridge
 
-有两套证书体系，**不能混用**：
+`just deploy` 一键完成远程部署，**自动生成 TLS 证书**，无需手动操作。
 
 **本地测试**（`just certs`）：
 ```bash
@@ -58,15 +58,9 @@ just certs
 # 仅用于本机调试，MCP server 和 bridge 都在同一台机器
 ```
 
-**远程部署**（`just deploy` 自动生成）：
-- install-bridge.sh 在**远程主机上**用 openssl 生成，CN 和 SAN 设为目标主机的 IP
-- 远程证书路径：`/opt/agent-ops/certs/bridge.{crt,key}`
-- MCP server 需要用远程的 `bridge.crt` 作为 `--ca-cert`
-
-### 3. 部署 bridge（首次安装）
-
+**远程部署**（`just deploy`）：
 ```bash
-# 一键部署：生成证书、上传二进制、创建 systemd 服务
+# 一键部署：生成证书 → 上传二进制 → 配置 systemd → 启动服务
 just deploy host=root@<your-bridge-ip> token=<your-token>
 
 # 或手动：
@@ -76,10 +70,23 @@ BRIDGE_TOKEN="<your-token>" bash deploy/install-bridge.sh \
 ```
 
 部署脚本自动完成：
+- 在**远程主机上**用 openssl 生成 TLS 证书（CN/SAN 设为目标主机 IP）
 - 上传 `rmux-bridge` 二进制到 `/opt/agent-ops/`
-- 生成 TLS 证书（含 IP SAN）
 - 写入 token 到 `/opt/agent-ops/bridge.env`（权限 600）
 - 创建 `rmux-bridge.service`（`systemctl enable --now`）
+
+远程证书路径：`/opt/agent-ops/certs/bridge.{crt,key}`
+MCP server 需要用远程的 `bridge.crt`（或 CA 根证书 `ca.crt`）作为 `--ca-cert`。
+
+> ⚠️ 两套证书**不能混用**：本地测试用 `just certs` 生成的自签名证书；远程部署用 `just deploy`（通过 `install-bridge.sh`）自动签发独立主机证书。
+
+**其他 Justfile 命令：**
+
+| 命令 | 说明 |
+|------|------|
+| `just certs` | 生成本地测试用自签名证书 |
+| `just certs-host host=<name>` | 为指定主机生成 TLS 证书 |
+| `just run-bridge host=<name>` | 本地启动 bridge（开发/测试） |
 
 **生成的 systemd 服务文件**（`/etc/systemd/system/rmux-bridge.service`）：
 
@@ -103,7 +110,7 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-### 4. 更新 bridge（已有安装）
+### 3. 更新 bridge（已有安装）
 
 ```bash
 # 交叉编译
@@ -118,12 +125,13 @@ ssh root@<your-bridge-ip> "systemctl start rmux-bridge"
 ssh root@<your-bridge-ip> "systemctl status rmux-bridge --no-pager"
 ```
 
-### 5. Bridge CLI 参数参考
+### 4. Bridge CLI 参数参考
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--listen-addr` | `0.0.0.0:9778` | TCP/TLS 监听地址（终端操作） |
 | `--quic-listen-addr` | `0.0.0.0:9778` | QUIC/UDP 监听地址（终端操作 + 文件传输） |
+| `--max-connections` | `256` | 最大并发连接数，0=无限制（`MAX_CONNECTIONS` 环境变量） |
 | `--rmux-socket` | `/tmp/rmux-1000/default` | RMUX daemon Unix socket 路径 |
 | `--tls-cert` | `certs/<host>.crt` | TLS 证书路径（CA 签发） |
 | `--tls-key` | `certs/<host>.key` | TLS 私钥路径 |
@@ -131,7 +139,7 @@ ssh root@<your-bridge-ip> "systemctl status rmux-bridge --no-pager"
 
 > **QUIC/TCP 共享 9778 端口**：MCP client 优先使用 QUIC，UDP 被防火墙阻断时自动降级 TCP/TLS。
 
-### 6. MCP Server CLI 参数参考
+### 5. MCP Server CLI 参数参考
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
@@ -143,7 +151,7 @@ ssh root@<your-bridge-ip> "systemctl status rmux-bridge --no-pager"
 | `--audit-max-size-mb` | `500` | 审计数据库大小上限 (MB) |
 | `--audit-cleanup-interval-secs` | `600` | 自动清理间隔（秒） |
 
-### 7. 认证模式
+### 6. 认证模式
 
 Bridge 支持两种 token 格式：
 
@@ -154,7 +162,7 @@ Bridge 支持两种 token 格式：
 
 在 `config/hosts.yaml` 的 `bridge_token` 和系统环境变量 `BRIDGE_AUTH_TOKEN` 中统一使用同一种格式。
 
-### 8. 配置主机注册表
+### 7. 配置主机注册表
 
 创建 `config/hosts.yaml`：
 
@@ -170,7 +178,7 @@ hosts:
       rack: a3
 ```
 
-### 9. 配置 MCP Server（OpenCode）
+### 8. 配置 MCP Server（OpenCode）
 
 编辑 `~/.config/opencode/opencode.json`：
 
@@ -192,7 +200,7 @@ hosts:
 }
 ```
 
-### 10. 验证
+### 9. 验证
 
 ```bash
 # 直接调 MCP 测试
@@ -258,13 +266,17 @@ agent-ops-mcp audit cleanup --older-than 30
 | `authentication failed` | 检查 `bridge.env` 中的 `BRIDGE_AUTH_TOKEN` 与 `hosts.yaml` 中 `bridge_token` 是否一致 |
 | TLS 握手失败 | `--ca-cert` 指向的证书是否与 bridge 端一致；或确认代码中启用了 `SkipVerification` |
 | `unknown request type` | bridge 版本过旧，重新交叉编译部署 |
-| RMUX socket 找不到 | `ls /tmp/rmux-*/default`，确认 rmux daemon 在运行（bridge 默认 `/tmp/rmux-1000/default`，部署脚本自动检测实际路径） |
+| RMUX socket 找不到 | `ls /tmp/rmux-*/default`，确认 rmux daemon 在运行（socket 路径取决于运行用户 UID：root → `/tmp/rmux-0/default`，普通用户 → `/tmp/rmux-1000/default`，部署脚本自动检测实际路径） |
 
 ## 安全
 
 ### Unix Socket
 
-rmux daemon 默认在 `/tmp/rmux-0/default` 创建 Unix socket，权限为 `srw-------`（仅 owner 可读写），其他用户无法访问。
+rmux daemon 按运行用户 UID 创建 Unix socket：
+- root → `/tmp/rmux-0/default`
+- 普通用户（UID 1000） → `/tmp/rmux-1000/default`
+
+部署脚本自动检测实际路径，无需手动指定。Socket 权限为 `srw-------`（仅 owner 可读写），其他用户无法访问。
 
 如果需要在非 `/tmp` 路径运行（避免系统 tmp 清理、或满足合规要求），配置 rmux daemon 使用自定义 socket 路径后，同步更新 bridge 的 `--rmux-socket` 参数。
 

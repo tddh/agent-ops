@@ -48,7 +48,7 @@
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|:---:|------|
 | `host` | string | ✅ | 主机名称 |
-| `session_name` | string | | 会话名称（可选，默认 `agent-session`） |
+| `session_name` | string | | 会话名称（可选，默认 `agent-ops`） |
 
 **返回** `{"ok": true, "session_name": "...", "pane_id": "%N"}`
 

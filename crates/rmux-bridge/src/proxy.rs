@@ -11,10 +11,13 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 use crate::protocol::ProtocolProxy;
 
+#[allow(dead_code)]
 const FILE_UPLOAD_FRAME: u8 = 0x03;
+#[allow(dead_code)]
 const FILE_DOWNLOAD_FRAME: u8 = 0x04;
 
 const MAX_FRAME_SIZE: usize = 64 * 1024 * 1024; // 64 MB
+#[allow(dead_code)]
 const MAX_CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4 MB
 
 /// Main event loop: reads length-prefixed JSON frames from `tls_stream`,
@@ -58,163 +61,17 @@ where
 
         let req_type = request["type"].as_str().unwrap_or("");
 
-        // file_upload: receive streaming chunks (multiple binary frames, zero-size = EOF)
+        // file_upload: DEPRECATED — use QUIC file transfer instead
         if req_type == "file_upload" {
-            let remote_path = request["remote_path"].as_str().unwrap_or("");
-            if remote_path.is_empty() {
-                let err = json!({"ok": false, "error": "missing remote_path"});
-                send_response(&writer, &err).await?;
-                continue;
-            }
-
-            // 创建父目录
-            if let Some(parent) = std::path::Path::new(remote_path).parent() {
-                if !parent.as_os_str().is_empty() {
-                    if let Err(e) = std::fs::create_dir_all(parent) {
-                        tracing::warn!("failed to create directory {}: {e}", parent.display());
-                        let err = json!({"ok": false, "error": format!("failed to create directory: {}", e)});
-                        send_response(&writer, &err).await?;
-                        continue;
-                    }
-                }
-            }
-
-            // 流式写入临时文件，避免内存累积
-            let tmp_path = format!("{}.tmp.{}", remote_path, std::process::id());
-            let mut file = match std::fs::File::create(&tmp_path) {
-                Ok(f) => f,
-                Err(e) => {
-                    let err =
-                        json!({"ok": false, "error": format!("failed to create temp file: {}", e)});
-                    send_response(&writer, &err).await?;
-                    continue;
-                }
-            };
-
-            use std::io::Write;
-            let mut total_written: u64 = 0;
-            let mut upload_ok = true;
-            let mut upload_err = String::new();
-
-            loop {
-                let mut frame_type = [0u8; 1];
-                if reader.read_exact(&mut frame_type).await.is_err() {
-                    upload_ok = false;
-                    upload_err = "connection closed during upload".into();
-                    break;
-                }
-                if frame_type[0] != FILE_UPLOAD_FRAME {
-                    upload_ok = false;
-                    upload_err = format!("expected file upload frame, got type {}", frame_type[0]);
-                    break;
-                }
-                let mut size_buf = [0u8; 8];
-                if reader.read_exact(&mut size_buf).await.is_err() {
-                    upload_ok = false;
-                    upload_err = "connection closed during chunk read".into();
-                    break;
-                }
-                let chunk_size = u64::from_le_bytes(size_buf) as usize;
-                if chunk_size == 0 {
-                    break; // EOF
-                }
-                if chunk_size > MAX_CHUNK_SIZE {
-                    upload_ok = false;
-                    upload_err = format!(
-                        "chunk too large: {} bytes (max {})",
-                        chunk_size, MAX_CHUNK_SIZE
-                    );
-                    break;
-                }
-                let mut chunk = vec![0u8; chunk_size];
-                if reader.read_exact(&mut chunk).await.is_err() {
-                    upload_ok = false;
-                    upload_err = "connection closed during chunk data".into();
-                    break;
-                }
-                if let Err(e) = file.write_all(&chunk) {
-                    upload_ok = false;
-                    upload_err = format!("write failed: {}", e);
-                    break;
-                }
-                total_written += chunk_size as u64;
-            }
-
-            drop(file);
-
-            if upload_ok {
-                // 原子重命名
-                if let Err(e) = std::fs::rename(&tmp_path, remote_path) {
-                    let _ = std::fs::remove_file(&tmp_path);
-                    let err = json!({"ok": false, "error": format!("rename failed: {}", e)});
-                    send_response(&writer, &err).await?;
-                } else {
-                    let resp = json!({"ok": true, "path": remote_path, "size": total_written});
-                    send_response(&writer, &resp).await?;
-                }
-            } else {
-                let _ = std::fs::remove_file(&tmp_path);
-                let err = json!({"ok": false, "error": upload_err});
-                send_response(&writer, &err).await?;
-            }
+            let err = json!({"ok": false, "error": "TCP file upload is deprecated, use QUIC file transfer instead"});
+            send_response(&writer, &err).await?;
             continue;
         }
 
-        // file_download: send binary data frame then JSON response
+        // file_download: DEPRECATED — use QUIC file transfer instead
         if req_type == "file_download" {
-            let remote_path = request["remote_path"].as_str().unwrap_or("");
-            match ProtocolProxy::handle_file_download_open(remote_path) {
-                Ok(mut file) => {
-                    let meta = match file.metadata() {
-                        Ok(m) => m,
-                        Err(e) => {
-                            let err = json!({"ok": false, "error": format!("failed to get file metadata: {}", e)});
-                            send_response(&writer, &err).await?;
-                            continue;
-                        }
-                    };
-                    let file_size = meta.len();
-
-                    // 发送 frame type + size
-                    {
-                        let mut w = writer.lock().await;
-                        if w.write_all(&[FILE_DOWNLOAD_FRAME]).await.is_err() {
-                            break;
-                        }
-                        if w.write_all(&file_size.to_le_bytes()).await.is_err() {
-                            break;
-                        }
-                    }
-
-                    // 流式分块发送
-                    use std::io::Read;
-                    let mut buf = vec![0u8; 64 * 1024];
-                    let mut sent: u64 = 0;
-                    loop {
-                        let n = match file.read(&mut buf) {
-                            Ok(0) => break,
-                            Ok(n) => n,
-                            Err(e) => {
-                                let err =
-                                    json!({"ok": false, "error": format!("read error: {}", e)});
-                                send_response(&writer, &err).await?;
-                                break;
-                            }
-                        };
-                        let mut w = writer.lock().await;
-                        if w.write_all(&buf[..n]).await.is_err() {
-                            break;
-                        }
-                        sent += n as u64;
-                    }
-
-                    let resp = json!({"ok": true, "path": remote_path, "size": sent});
-                    send_response(&writer, &resp).await?;
-                }
-                Err(err_resp) => {
-                    send_response(&writer, &err_resp).await?;
-                }
-            }
+            let err = json!({"ok": false, "error": "TCP file download is deprecated, use QUIC file transfer instead"});
+            send_response(&writer, &err).await?;
             continue;
         }
 
@@ -233,28 +90,39 @@ where
                     let writer_clone = writer.clone();
                     let pid = pane_id.to_string();
                     tokio::spawn(async move {
-                        while let Some(text) = out_stream.rx.recv().await {
-                            let mut w = writer_clone.lock().await;
-                            if w.write_all(&[0x02]).await.is_err() {
-                                break;
-                            }
-                            if w.write_all(&(pid.len() as u32).to_le_bytes())
-                                .await
-                                .is_err()
+                        loop {
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(30),
+                                out_stream.rx.recv(),
+                            )
+                            .await
                             {
-                                break;
-                            }
-                            if w.write_all(pid.as_bytes()).await.is_err() {
-                                break;
-                            }
-                            if w.write_all(&(text.len() as u32).to_le_bytes())
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                            if w.write_all(text.as_bytes()).await.is_err() {
-                                break;
+                                Ok(Some(text)) => {
+                                    let mut w = writer_clone.lock().await;
+                                    if w.write_all(&[0x02]).await.is_err() {
+                                        break;
+                                    }
+                                    if w.write_all(&(pid.len() as u32).to_le_bytes())
+                                        .await
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                    if w.write_all(pid.as_bytes()).await.is_err() {
+                                        break;
+                                    }
+                                    if w.write_all(&(text.len() as u32).to_le_bytes())
+                                        .await
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                    if w.write_all(text.as_bytes()).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                Ok(None) => break,
+                                Err(_) => break,
                             }
                         }
                     });

@@ -6,3 +6,6 @@
 pub mod types;
 
 pub use types::*;
+
+/// Maximum allowed JSON frame size (64 MB)
+pub const MAX_FRAME_SIZE: usize = 64 * 1024 * 1024;

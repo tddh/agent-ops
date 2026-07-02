@@ -25,7 +25,7 @@ graph LR
     C <-->|Unix Socket| D[RMUX daemon<br/>基于 tmux]
 ```
 
-- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 35 个终端控制工具 + 操作审计 CLI
+- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 36 个终端控制工具 + 操作审计 CLI
 - **rmux-bridge** — 部署在每台目标 Linux 主机上的 TLS 加密代理，将 JSON 请求翻译为 RMUX daemon 调用
 - **RMUX daemon** — 每台 Linux 主机上的终端多路复用器（基于 tmux）
 
@@ -96,14 +96,16 @@ hosts:
       "command": ["/path/to/agent-ops-mcp"],
       "args": [
         "--hosts-file", "/path/to/hosts.yaml",
-        "--ca-cert", "/path/to/bridge.crt"
-        // 调试可用 "--insecure" 跳过证书验证（不推荐生产）
+        "--ca-cert", "/path/to/ca.crt"
       ],
       "enabled": true
     }
   }
 }
 ```
+
+> 远程部署使用 `ca.crt`；本地自签名测试可用 `bridge.crt`。
+> 调试可用 `--insecure` 跳过证书验证（不推荐生产环境使用）。
 
 ## 安全
 
@@ -135,18 +137,20 @@ agent-ops-mcp audit cleanup --older-than 30
 
 ## 工具列表
 
-共 35 个 MCP 工具，覆盖完整终端生命周期：
+共 36 个 MCP 工具，覆盖完整终端生命周期：
 
 | 类别 | 工具 |
 |------|------|
 | 主机管理 | `host_list`, `host_filter` |
 | 会话管理 | `session_create`, `session_list`, `session_attach`, `session_detach`, `kill_session` |
 | 终端输入 | `send_keys`, `send_text`, `broadcast_keys` |
-| 终端输出 | `capture_pane`, `wait_for_text`, `find_pane_text` |
+| 终端输出 | `capture_pane`, `wait_for_text`, `find_pane_text`, `stream_pane` |
 | 命令执行 | `exec`, `wait_exit`, `spawn_command`, `shell_command`, `respawn_pane`, `cmd_escape` |
 | 窗格操作 | `split_pane`, `resize_pane`, `set_pane_title`, `close_pane`, `pane_info`, `pane_exists` |
 | 窗口操作 | `split_window`, `close_window`, `rename_window`, `resize_window`, `select_window`, `select_layout`, `window_info`, `list_window_panes` |
 | 文件传输 | `file_upload`, `file_download` |
+
+> ⚠️ `stream_pane` 当前不可用 — MCP 协议限制。替代方案：`send_keys` + `capture_pane` 轮询。
 
 完整工具文档见 [docs/TOOLS.md](docs/TOOLS.md)。
 
@@ -171,7 +175,7 @@ just build       # cargo build --workspace
 
 ## 文档
 
-- [工具文档](docs/TOOLS.md) — 35 个 MCP 工具的完整参数与返回值
+- [工具文档](docs/TOOLS.md) — 36 个 MCP 工具的完整参数与返回值
 - [部署文档](docs/DEPLOY.md) — 架构、构建、部署、运维、安全
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)

@@ -161,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
                         Ok((send, recv)) => {
                             let proxy = protocol_proxy.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = files::handle_quic_stream(send, recv, Some(proxy)).await {
+                                if let Err(e) = files::handle_quic_stream(send, recv, proxy).await {
                                     tracing::warn!("QUIC stream error: {}", e);
                                 }
                             });
