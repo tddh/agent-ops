@@ -1,3 +1,4 @@
+#![recursion_limit = "512"]
 mod audit;
 mod files;
 mod router;
@@ -94,6 +95,11 @@ async fn main() -> anyhow::Result<()> {
     let tools_definition = serde_json::json!({
         "tools": [
             {
+                "name": "_usage_rules",
+                "description": "⚠️ IMPORTANT agent-ops usage rules: (1) send_text puts text in input buffer WITHOUT executing — always follow with exec or send_keys Enter to run. (2) Multiple send_text calls without exec will concatenate on the same line. (3) exec automatically clears leftover input before running. (4) Do NOT combine commands with && / ; / | unless the user explicitly asks — run commands one at a time. (5) If the user has explicit formatting or execution requirements, follow them exactly.",
+                "inputSchema": { "type": "object", "properties": {}, "required": [] }
+            },
+            {
                 "name": "host_list",
                 "description": "List all known remote hosts and their status",
                 "inputSchema": { "type": "object", "properties": {}, "required": [] }
@@ -153,7 +159,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "send_keys",
-                "description": "Send keystrokes to a pane. Special keys: Ctrl-C=\\x03, Enter=\\n, Tab=\\t, Escape=\\x1b. Use send_text for plain text.",
+                "description": "Send keystrokes to a pane, supporting escape sequences (\\\\n=Enter, \\\\t=Tab, \\\\r=CR, \\\\e=Escape, \\\\x03=Ctrl-C, \\\\xNN=hex). Prefer exec for running commands; prefer send_text for plain text without escape interpretation.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -306,7 +312,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "exec",
-                "description": "One-shot command execution: send command → wait for exit → capture output → clean text (default 200 lines, 30s timeout). For self-terminating commands (ls, cat, grep, systemctl, kubectl, curl). NOT for interactive programs (vim, htop) or non-terminating commands (tail -f, ping). Use send_keys + capture_pane for those.",
+                "description": "One-shot command execution: send command → wait for exit → capture output → clean text (default 200 lines, 30s timeout). Automatically clears any unexecuted input before running. Do NOT use shell combiners (&&, ;, |) unless the user explicitly requests it — run commands separately. For self-terminating commands (ls, cat, grep, systemctl, kubectl, curl). NOT for interactive programs (vim, htop) or non-terminating commands (tail -f, ping). Use send_keys + capture_pane for those.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -352,7 +358,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "send_text",
-                "description": "Send plain text to a pane. Unlike send_keys, does NOT interpret special key sequences.",
+                "description": "Send plain text to a pane. Unlike send_keys, does NOT interpret special key sequences. Text stays in terminal input buffer without executing — always follow with exec or send_keys Enter to actually run it. Multiple send_text calls without exec in between will concatenate on the same line.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {

@@ -20,6 +20,7 @@ pub struct ToolContext {
 
 pub async fn execute_tool(ctx: &ToolContext, tool_name: &str, args: Value) -> Result<Value> {
     match tool_name {
+        "_usage_rules" => Ok(json!({})),
         "host_list" => host_list(ctx).await,
         "host_filter" => host_filter(ctx, args).await,
         "session_create" => session_create(ctx, args).await,
@@ -160,17 +161,50 @@ async fn session_detach(ctx: &ToolContext, args: Value) -> Result<Value> {
     Ok(response)
 }
 
+/// 将字面量转义序列转为实际控制字符。
+/// 兜底处理 OpenCode 等 MCP 客户端未正确 JSON-转义的情况。
+fn unescape_keys(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n')  => out.push('\n'),
+            Some('r')  => out.push('\r'),
+            Some('t')  => out.push('\t'),
+            Some('e')  => out.push('\x1b'),
+            Some('x')  => {
+                let hi = chars.next().unwrap_or('\0');
+                let lo = chars.next().unwrap_or('\0');
+                if let (Some(h), Some(l)) = (hi.to_digit(16), lo.to_digit(16)) {
+                    out.push(((h << 4) | l) as u8 as char);
+                } else {
+                    out.push_str(&format!("\\x{}{}", hi, lo));
+                }
+            }
+            Some('\\') => out.push('\\'),
+            Some(other) => { out.push('\\'); out.push(other); }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 async fn send_keys(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
-    let keys = args["keys"].as_str().context("missing 'keys'")?;
+    let raw_keys = args["keys"].as_str().context("missing 'keys'")?;
+    let keys = unescape_keys(raw_keys);
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
     let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
 
     send_json_frame(&mut tls, &json!({ "type": "send_keys", "session_name": session_name, "pane_id": pane_id, "keys": keys })).await?;
     let response = recv_json_frame(&mut tls).await?;
-    audit(ctx, AuditAction::SendKeys, host_name, session_name, Some(pane_id), keys, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    audit(ctx, AuditAction::SendKeys, host_name, session_name, Some(pane_id), &keys, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
     Ok(response)
 }
 
@@ -221,6 +255,7 @@ async fn broadcast_keys(ctx: &ToolContext, args: Value) -> Result<Value> {
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let pane_ids = args["pane_ids"].as_array().cloned().unwrap_or_default();
     let keys = args["keys"].as_str().context("missing 'keys'")?;
+    let keys = unescape_keys(keys);
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
     let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
     send_json_frame(&mut tls, &json!({ "type": "broadcast_keys", "session_name": session_name, "pane_ids": pane_ids, "keys": keys })).await?;
@@ -430,7 +465,7 @@ async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
     let sentinel_marker = format!("[{} ", marker_id);
 
     let prefix = if clear_screen { "clear\n" } else { "" };
-    let keys = format!("{}echo '{}'\n{}\necho \"{}$?]\"\n", prefix, start_marker, command, sentinel_marker);
+    let keys = format!("\x15{}echo '{}'\n{}\necho \"{}$?]\"\n", prefix, start_marker, command, sentinel_marker);
     send_json_frame(
         &mut tls,
         &json!({ "type": "send_keys", "session_name": session_name, "pane_id": pane_id, "keys": keys }),
