@@ -420,7 +420,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "close_pane",
-                "description": "Close a pane (kill the process)",
+                "description": "Close a pane (kill the process). ⚠️ WARNING: NEVER use this unless the user explicitly asks to close the pane.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -502,7 +502,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "close_window",
-                "description": "Close a window (kills all panes within)",
+                "description": "Close a window (kills all panes within). ⚠️ WARNING: NEVER use this unless the user explicitly asks to close the window.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -515,7 +515,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "kill_session",
-                "description": "Destroy an entire terminal session (all windows and panes)",
+                "description": "Destroy an entire terminal session (all windows and panes). ⚠️ WARNING: NEVER use this unless the user explicitly asks to close/kill/destroy the session. Sessions may contain ongoing work.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
