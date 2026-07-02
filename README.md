@@ -25,7 +25,7 @@ graph LR
     C <-->|Unix Socket| D[RMUX daemon<br/>tmux-based]
 ```
 
-- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 36 terminal control tools + audit CLI
+- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 39 terminal control tools + audit CLI
 - **rmux-bridge** — TLS-encrypted proxy deployed on each target Linux host, translating JSON requests to RMUX daemon calls
 - **RMUX daemon** — Terminal multiplexer on each Linux host (tmux-based)
 
@@ -136,7 +136,7 @@ Audit data stored at `~/.agent-ops/audit.db`, retained 90 days, max 500 MB.
 
 ## Tools
 
-36 MCP tools covering the full terminal lifecycle:
+39 MCP tools covering the full terminal lifecycle:
 
 | Category | Tools |
 |----------|-------|
@@ -148,6 +148,7 @@ Audit data stored at `~/.agent-ops/audit.db`, retained 90 days, max 500 MB.
 | Pane | `split_pane`, `resize_pane`, `set_pane_title`, `close_pane`, `pane_info`, `pane_exists` |
 | Window | `split_window`, `close_window`, `rename_window`, `resize_window`, `select_window`, `select_layout`, `window_info`, `list_window_panes` |
 | File | `file_upload`, `file_download` |
+| Batch | `batch_exec`, `batch_upload`, `batch_download` |
 
 > ⚠️ `stream_pane` 当前不可用 — MCP 协议限制。替代方案：`send_keys` + `capture_pane` 轮询。
 
@@ -174,7 +175,7 @@ just build       # cargo build --workspace
 
 ## Docs
 
-- [Tool Reference](docs/TOOLS.md) — 36 MCP tools with parameters and return values
+- [Tool Reference](docs/TOOLS.md) — 39 MCP tools with parameters and return values
 - [Deployment Guide](docs/DEPLOY.md) — Architecture, build, deploy, operations, security
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)

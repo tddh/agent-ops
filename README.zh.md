@@ -25,7 +25,7 @@ graph LR
     C <-->|Unix Socket| D[RMUX daemon<br/>基于 tmux]
 ```
 
-- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 36 个终端控制工具 + 操作审计 CLI
+- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 39 个终端控制工具 + 操作审计 CLI
 - **rmux-bridge** — 部署在每台目标 Linux 主机上的 TLS 加密代理，将 JSON 请求翻译为 RMUX daemon 调用
 - **RMUX daemon** — 每台 Linux 主机上的终端多路复用器（基于 tmux）
 
@@ -137,7 +137,7 @@ agent-ops-mcp audit cleanup --older-than 30
 
 ## 工具列表
 
-共 36 个 MCP 工具，覆盖完整终端生命周期：
+共 39 个 MCP 工具，覆盖完整终端生命周期：
 
 | 类别 | 工具 |
 |------|------|
@@ -149,6 +149,7 @@ agent-ops-mcp audit cleanup --older-than 30
 | 窗格操作 | `split_pane`, `resize_pane`, `set_pane_title`, `close_pane`, `pane_info`, `pane_exists` |
 | 窗口操作 | `split_window`, `close_window`, `rename_window`, `resize_window`, `select_window`, `select_layout`, `window_info`, `list_window_panes` |
 | 文件传输 | `file_upload`, `file_download` |
+| 批量操作 | `batch_exec`, `batch_upload`, `batch_download` |
 
 > ⚠️ `stream_pane` 当前不可用 — MCP 协议限制。替代方案：`send_keys` + `capture_pane` 轮询。
 
@@ -175,7 +176,7 @@ just build       # cargo build --workspace
 
 ## 文档
 
-- [工具文档](docs/TOOLS.md) — 36 个 MCP 工具的完整参数与返回值
+- [工具文档](docs/TOOLS.md) — 39 个 MCP 工具的完整参数与返回值
 - [部署文档](docs/DEPLOY.md) — 架构、构建、部署、运维、安全
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)

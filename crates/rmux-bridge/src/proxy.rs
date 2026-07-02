@@ -35,11 +35,7 @@ where
 
     loop {
         if let Err(e) = reader.read_exact(&mut len_buf).await {
-            if handled {
-                tracing::debug!("client disconnected after {} request(s)", handled as u32);
-            } else {
-                tracing::warn!("frame read length error: {e}");
-            }
+            tracing::debug!("client disconnected after {} request(s): {}", handled as u32, e);
             break;
         }
         let len = u32::from_le_bytes(len_buf) as usize;
