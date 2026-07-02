@@ -626,3 +626,77 @@ Execute the same command on multiple hosts concurrently. Sends the command to al
 - `total_duration_ms` 是墙钟时间（所有主机中最长的那台），反映并发效果
 - 非零 exit_code **不** 标记为 error——exit_code 是命令结果，不是执行失败
 - 内部通过 `agent-ops` session 的默认 pane `%0` 执行，行为与 `exec` 一致
+
+### `batch_upload`
+
+Upload a file or directory to multiple hosts concurrently.
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `hosts` | string[] | ✅ | 主机名列表 |
+| `local_path` | string | ✅ | 本地文件或目录路径 |
+| `remote_path` | string | ✅ | 远程目标路径 |
+| `overwrite` | string | | overwrite\|skip\|rename\|error（默认 overwrite） |
+| `exclude` | string[] | | 排除 glob 模式（仅目录上传） |
+| `concurrency` | integer | | 最大并发连接数（默认 5，0=不限制） |
+
+**返回**
+
+```json
+{
+  "ok": true,
+  "total": 3,
+  "success": 2,
+  "failed": 1,
+  "total_duration_ms": 5678,
+  "results": {
+    "tf01": {
+      "ok": true,
+      "files": [{"path": "/opt/app", "status": "uploaded", "size": 12345, "sha256": "abc..."}],
+      "total": 1, "uploaded": 1, "skipped": 0, "failed_count": 0
+    },
+    "tf02": {
+      "ok": false,
+      "error": "connect: connection refused"
+    }
+  }
+}
+```
+
+### `batch_download`
+
+Download a file from multiple hosts concurrently. Each host's file is saved to `local_dir/<hostname>/<filename>`. ⚠️ Multiple runs to the same `local_dir` WILL overwrite previous downloads — use different `local_dir` per run to preserve history.
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `hosts` | string[] | ✅ | 主机名列表 |
+| `remote_path` | string | ✅ | 远程文件路径 |
+| `local_dir` | string | ✅ | 本地目录（自动创建 `<hostname>/` 子目录） |
+| `concurrency` | integer | | 最大并发连接数（默认 5，0=不限制） |
+
+**返回**
+
+```json
+{
+  "ok": true,
+  "total": 2,
+  "success": 1,
+  "failed": 1,
+  "total_duration_ms": 3456,
+  "results": {
+    "tf01": {
+      "ok": true,
+      "file": {
+        "remote_path": "/var/log/syslog",
+        "local_path": "./logs/tf01/syslog",
+        "size": 987654,
+        "sha256": "def..."
+      }
+    },
+    "tf02": {
+      "ok": false,
+      "error": "download failed: file not found"
+    }
+  }
+}
+```
