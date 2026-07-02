@@ -242,7 +242,7 @@ pub async fn handle_quic_stream(
     match type_buf[0] {
         0x01 => {
             let adapter = crate::proxy::QuicStreamAdapter { recv, send };
-            crate::proxy::proxy_legacy(0x01, adapter, &protocol_proxy).await
+            crate::proxy::proxy_protocol_aware(adapter, &protocol_proxy).await
         }
         0x02 => handle_upload_quic(send, recv).await,
         0x03 => handle_download_quic(send, recv).await,
