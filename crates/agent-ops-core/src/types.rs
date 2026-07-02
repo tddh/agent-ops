@@ -107,4 +107,5 @@ pub enum AuditAction {
     BroadcastKeys,
     CmdEscape,
     StreamSubscribe,
+    BatchExec,
 }
