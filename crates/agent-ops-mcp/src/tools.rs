@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::audit;
 use crate::router::HostRouter;
 use crate::transport::connect_to_bridge_hybrid;
+use crate::transport::BridgeStream;
 
 pub struct ToolContext {
     pub router: Arc<HostRouter>,
@@ -625,6 +626,153 @@ async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
         "exit_code": result.exit_code,
         "duration_ms": result.duration_ms,
         "error": result.error,
+    }))
+}
+
+/// 内部 session_attach（不记 audit）
+async fn session_attach_inner(stream: &mut BridgeStream, session_name: &str) -> Result<Value> {
+    send_json_frame(stream, &json!({ "type": "attach_session", "session_name": session_name })).await?;
+    recv_json_frame(stream).await
+}
+
+/// 内部 session_create（不记 audit）
+async fn create_session_inner(stream: &mut BridgeStream, session_name: &str) -> Result<Value> {
+    send_json_frame(stream, &json!({ "type": "new_session", "name": session_name, "detached": true })).await?;
+    recv_json_frame(stream).await
+}
+
+/// 解析主机名列表 → (name, Option<HostConfig>)
+fn resolve_hosts(ctx: &ToolContext, names: &[String]) -> Vec<(String, Option<agent_ops_core::types::HostConfig>)> {
+    names.iter().map(|name| {
+        let h = ctx.router.get(name);
+        (name.clone(), h.cloned())
+    }).collect()
+}
+
+/// 创建并发信号量（concurrency=0 → None，即不限制）
+fn make_semaphore(limit: usize) -> Option<Arc<tokio::sync::Semaphore>> {
+    if limit > 0 { Some(Arc::new(tokio::sync::Semaphore::new(limit))) } else { None }
+}
+
+/// 收集 JoinHandle 结果 → (results_map, success_count, failed_count)
+async fn collect_batch_results(
+    handles: Vec<tokio::task::JoinHandle<(String, Value)>>,
+) -> (serde_json::Map<String, Value>, u32, u32) {
+    let mut results_map = serde_json::Map::new();
+    let mut success = 0u32;
+    let mut failed = 0u32;
+    for handle in handles {
+        if let Ok((host_name, result)) = handle.await {
+            if result["ok"].as_bool().unwrap_or(false) { success += 1; } else { failed += 1; }
+            results_map.insert(host_name, result);
+        } else {
+            failed += 1;
+            results_map.insert("unknown".into(), json!({"ok": false, "error": "task cancelled"}));
+        }
+    }
+    (results_map, success, failed)
+}
+
+async fn batch_exec(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let hosts_arg: Vec<String> = args["hosts"]
+        .as_array()
+        .context("missing 'hosts'")?
+        .iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+
+    if hosts_arg.is_empty() {
+        return Ok(json!({ "ok": true, "command": "", "total": 0, "success": 0, "failed": 0,
+            "total_duration_ms": 0, "results": {}, "error": "empty hosts list" }));
+    }
+
+    let command = args["command"].as_str().context("missing 'command'")?;
+    let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(120000);
+    let max_lines = args["max_lines"].as_u64().map(|v| v as usize).unwrap_or(200);
+    let concurrency_limit = args["concurrency"].as_u64().unwrap_or(5) as usize;
+
+    let targets = resolve_hosts(ctx, &hosts_arg);
+    let semaphore = make_semaphore(concurrency_limit);
+    let ca_cert = ctx.ca_cert_path.clone();
+    let insecure = ctx.insecure;
+    let cmd = command.to_string();
+    let start = std::time::Instant::now();
+
+    let mut handles: Vec<tokio::task::JoinHandle<(String, Value)>> = Vec::new();
+
+    for (host_name, host_opt) in targets {
+        let ca_cert = ca_cert.clone();
+        let cmd = cmd.clone();
+        let sem = semaphore.clone();
+
+        let handle = tokio::spawn(async move {
+            let _permit = if let Some(s) = &sem {
+                s.acquire().await.ok()
+            } else { None };
+
+            let host = match host_opt {
+                Some(h) => h,
+                None => return (host_name, json!({
+                    "ok": false, "output": "", "exit_code": null,
+                    "duration_ms": 0, "error": "host not found in registry",
+                })),
+            };
+
+            let mut stream = match connect_to_bridge_hybrid(
+                &host.bridge_addr, &host.bridge_token,
+                ca_cert.as_deref(), 3, insecure,
+            ).await {
+                Ok(s) => s,
+                Err(e) => return (host_name, json!({
+                    "ok": false, "output": "", "exit_code": null,
+                    "duration_ms": 0, "error": format!("connect: {e}"),
+                })),
+            };
+
+            let session_name = "agent-ops";
+
+            let exists = match session_attach_inner(&mut stream, session_name).await {
+                Ok(resp) => resp.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
+                Err(_) => false,
+            };
+            if !exists {
+                if let Err(e) = create_session_inner(&mut stream, session_name).await {
+                    return (host_name, json!({
+                        "ok": false, "output": "", "exit_code": null,
+                        "duration_ms": 0, "error": format!("session_create: {e}"),
+                    }));
+                }
+            }
+
+            let result = exec_in_session(&mut stream, session_name, "%0", &cmd, timeout_ms, max_lines).await;
+
+            (host_name, json!({
+                "ok": result.ok && result.error.is_none(),
+                "output": result.output,
+                "exit_code": result.exit_code,
+                "duration_ms": result.duration_ms,
+                "error": result.error,
+            }))
+        });
+
+        handles.push(handle);
+    }
+
+    let (results_map, success_count, failed_count) = collect_batch_results(handles).await;
+    let total_duration_ms = start.elapsed().as_millis() as u64;
+
+    audit(ctx, AuditAction::BatchExec, "", "", None,
+        &format!("hosts:{:?} cmd:{}", hosts_arg, cmd), None,
+        failed_count == 0, total_duration_ms, None).await;
+
+    Ok(json!({
+        "ok": failed_count == 0,
+        "command": command,
+        "total": hosts_arg.len(),
+        "success": success_count,
+        "failed": failed_count,
+        "total_duration_ms": total_duration_ms,
+        "results": results_map,
     }))
 }
 
