@@ -108,4 +108,6 @@ pub enum AuditAction {
     CmdEscape,
     StreamSubscribe,
     BatchExec,
+    BatchUpload,
+    BatchDownload,
 }

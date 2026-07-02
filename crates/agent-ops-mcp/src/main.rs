@@ -584,6 +584,36 @@ async fn main() -> anyhow::Result<()> {
                     },
                     "required": ["hosts", "command"]
                 }
+            },
+            {
+                "name": "batch_upload",
+                "description": "Upload a file or directory to multiple hosts concurrently. Each host receives the same file(s) at the specified remote_path. Per-host error isolation. Supports overwrite modes (overwrite|skip|rename|error) and exclude glob patterns. Default 5 concurrent connections. Uses QUIC transport.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "hosts": { "type": "array", "items": { "type": "string" }, "description": "Hostname list" },
+                        "local_path": { "type": "string", "description": "Local file or directory path" },
+                        "remote_path": { "type": "string", "description": "Remote destination path" },
+                        "overwrite": { "type": "string", "description": "overwrite|skip|rename|error (default: overwrite)" },
+                        "exclude": { "type": "array", "items": { "type": "string" }, "description": "Glob patterns to exclude (directories only)" },
+                        "concurrency": { "type": "integer", "description": "Max concurrent connections (default: 5, 0=unlimited)" }
+                    },
+                    "required": ["hosts", "local_path", "remote_path"]
+                }
+            },
+            {
+                "name": "batch_download",
+                "description": "Download a file from multiple hosts concurrently. Saves to local_dir/<hostname>/<filename> to avoid host-to-host overwrites. ⚠️ Multiple runs to same local_dir WILL overwrite previous downloads. Use different local_dir per run to preserve history. Returns per-host size and SHA256. Per-host error isolation. Default 5 concurrent connections. Uses QUIC transport.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "hosts": { "type": "array", "items": { "type": "string" }, "description": "Hostname list" },
+                        "remote_path": { "type": "string", "description": "Remote file path to download" },
+                        "local_dir": { "type": "string", "description": "Local directory (files saved as <local_dir>/<hostname>/<filename>)" },
+                        "concurrency": { "type": "integer", "description": "Max concurrent connections (default: 5, 0=unlimited)" }
+                    },
+                    "required": ["hosts", "remote_path", "local_dir"]
+                }
             }
         ]
     });

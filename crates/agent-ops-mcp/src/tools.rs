@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::audit;
 use crate::router::HostRouter;
+use crate::files::OverwriteMode;
 use crate::transport::connect_to_bridge_hybrid;
 use crate::transport::BridgeStream;
 
@@ -59,6 +60,8 @@ pub async fn execute_tool(ctx: &ToolContext, tool_name: &str, args: Value) -> Re
         "window_info" => window_info(ctx, args).await,
         "pane_exists" => pane_exists(ctx, args).await,
         "batch_exec" => batch_exec(ctx, args).await,
+        "batch_upload" => batch_upload(ctx, args).await,
+        "batch_download" => batch_download(ctx, args).await,
         _ => anyhow::bail!("unknown tool: {}", tool_name),
     }
 }
@@ -774,6 +777,146 @@ async fn batch_exec(ctx: &ToolContext, args: Value) -> Result<Value> {
         "failed": failed_count,
         "total_duration_ms": total_duration_ms,
         "results": results_map,
+    }))
+}
+
+async fn batch_upload(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let hosts_arg: Vec<String> = args["hosts"]
+        .as_array().context("missing 'hosts'")?
+        .iter().filter_map(|v| v.as_str().map(String::from)).collect();
+
+    if hosts_arg.is_empty() {
+        return Ok(json!({"ok": true, "total": 0, "success": 0, "failed": 0,
+            "total_duration_ms": 0, "results": {}, "error": "empty hosts list"}));
+    }
+
+    let local_path = args["local_path"].as_str().context("missing 'local_path'")?;
+    let remote_path = args["remote_path"].as_str().context("missing 'remote_path'")?;
+    let overwrite = match args["overwrite"].as_str().unwrap_or("overwrite") {
+        "skip" => OverwriteMode::Skip,
+        "rename" => OverwriteMode::Rename,
+        "error" => OverwriteMode::NoClobber,
+        _ => OverwriteMode::Overwrite,
+    };
+    let exclude: Vec<String> = args["exclude"].as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let concurrency_limit = args["concurrency"].as_u64().unwrap_or(5) as usize;
+
+    let targets = resolve_hosts(ctx, &hosts_arg);
+    let semaphore = make_semaphore(concurrency_limit);
+    let ca_cert = ctx.ca_cert_path.clone();
+    let insecure = ctx.insecure;
+    let start = std::time::Instant::now();
+
+    let mut handles: Vec<tokio::task::JoinHandle<(String, Value)>> = Vec::new();
+    for (host_name, host_opt) in targets {
+        let ca_cert = ca_cert.clone();
+        let local = local_path.to_string();
+        let remote = remote_path.to_string();
+        let exclude = exclude.clone();
+        let sem = semaphore.clone();
+
+        handles.push(tokio::spawn(async move {
+            let _permit = if let Some(s) = &sem { s.acquire().await.ok() } else { None };
+            let host = match host_opt {
+                Some(h) => h,
+                None => return (host_name, json!({"ok": false, "error": "host not found"})),
+            };
+            match crate::files::upload_file(&host, &local, &remote, ca_cert.as_deref(), insecure, overwrite, &exclude).await {
+                Ok(files) => {
+                    let uploaded = files.iter().filter(|f| f.status == "uploaded").count();
+                    let file_failed = files.iter().filter(|f| f.status == "failed").count();
+                    (host_name, json!({
+                        "ok": file_failed == 0,
+                        "files": files, "total": files.len(),
+                        "uploaded": uploaded, "skipped": files.len() - uploaded - file_failed,
+                        "failed_count": file_failed,
+                    }))
+                }
+                Err(e) => (host_name, json!({"ok": false, "error": e.to_string()})),
+            }
+        }));
+    }
+
+    let (results_map, success_count, failed_count) = collect_batch_results(handles).await;
+    let total_duration_ms = start.elapsed().as_millis() as u64;
+    audit(ctx, AuditAction::BatchUpload, "", "", None,
+        &format!("hosts:{:?} local:{}", hosts_arg, local_path), None,
+        failed_count == 0, total_duration_ms, None).await;
+
+    Ok(json!({
+        "ok": failed_count == 0, "total": hosts_arg.len(),
+        "success": success_count, "failed": failed_count,
+        "total_duration_ms": total_duration_ms, "results": results_map,
+    }))
+}
+
+async fn batch_download(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let hosts_arg: Vec<String> = args["hosts"]
+        .as_array().context("missing 'hosts'")?
+        .iter().filter_map(|v| v.as_str().map(String::from)).collect();
+
+    if hosts_arg.is_empty() {
+        return Ok(json!({"ok": true, "total": 0, "success": 0, "failed": 0,
+            "total_duration_ms": 0, "results": {}, "error": "empty hosts list"}));
+    }
+
+    let remote_path = args["remote_path"].as_str().context("missing 'remote_path'")?;
+    let local_dir = args["local_dir"].as_str().context("missing 'local_dir'")?;
+    let concurrency_limit = args["concurrency"].as_u64().unwrap_or(5) as usize;
+
+    let file_name = std::path::Path::new(remote_path)
+        .file_name().map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| remote_path.to_string());
+
+    let targets = resolve_hosts(ctx, &hosts_arg);
+    let semaphore = make_semaphore(concurrency_limit);
+    let ca_cert = ctx.ca_cert_path.clone();
+    let insecure = ctx.insecure;
+    let start = std::time::Instant::now();
+
+    let mut handles: Vec<tokio::task::JoinHandle<(String, Value)>> = Vec::new();
+    for (host_name, host_opt) in targets {
+        let ca_cert = ca_cert.clone();
+        let remote = remote_path.to_string();
+        let local_dir = local_dir.to_string();
+        let file_name = file_name.clone();
+        let sem = semaphore.clone();
+
+        handles.push(tokio::spawn(async move {
+            let _permit = if let Some(s) = &sem { s.acquire().await.ok() } else { None };
+            let host = match host_opt {
+                Some(h) => h,
+                None => return (host_name.clone(), json!({"ok": false, "error": "host not found"})),
+            };
+            let local_path = format!("{}/{}/{}", local_dir, host_name, file_name);
+            if let Some(parent) = std::path::Path::new(&local_path).parent() {
+                if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                    return (host_name.clone(), json!({"ok": false, "error": format!("mkdir: {e}")}));
+                }
+            }
+            match crate::files::download_file(&host, &remote, &local_path, ca_cert.as_deref(), insecure).await {
+                Ok(file) => (host_name, json!({
+                    "ok": true,
+                    "file": {"remote_path": remote, "local_path": local_path,
+                              "size": file.size, "sha256": file.sha256}
+                })),
+                Err(e) => (host_name, json!({"ok": false, "error": e.to_string()})),
+            }
+        }));
+    }
+
+    let (results_map, success_count, failed_count) = collect_batch_results(handles).await;
+    let total_duration_ms = start.elapsed().as_millis() as u64;
+    audit(ctx, AuditAction::BatchDownload, "", "", None,
+        &format!("hosts:{:?} remote:{}", hosts_arg, remote_path), None,
+        failed_count == 0, total_duration_ms, None).await;
+
+    Ok(json!({
+        "ok": failed_count == 0, "total": hosts_arg.len(),
+        "success": success_count, "failed": failed_count,
+        "total_duration_ms": total_duration_ms, "results": results_map,
     }))
 }
 
