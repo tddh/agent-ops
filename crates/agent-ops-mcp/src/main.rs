@@ -569,6 +569,21 @@ async fn main() -> anyhow::Result<()> {
                     },
                     "required": ["host", "session_name", "pane_id"]
                 }
+            },
+            {
+                "name": "batch_exec",
+                "description": "Multi-host command execution: sends the same command to all specified hosts concurrently, waits for each to complete (sentinel polling), captures output per host, and returns results keyed by hostname. Default 5 concurrent connections, 200 lines/host, 2min timeout/host. Host-level failures (connection refused, timeout) are marked ok=false but do NOT affect other hosts. Non-zero exit codes are NOT treated as errors — they are part of the command result. For self-terminating commands only (ls, cat, grep, df, systemctl, kubectl, curl). NOT for interactive programs (vim, htop) or non-terminating commands (tail -f, ping). Uses the agent-ops session default pane (%0) on each host. Use this when you need to run the same command on multiple machines in one round — saves N-1 round trips compared to calling exec per host.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "hosts": { "type": "array", "items": { "type": "string" }, "description": "Hostname list, max 64" },
+                        "command": { "type": "string", "description": "Command to execute on each host" },
+                        "timeout_ms": { "type": "number", "description": "Per-host timeout in ms (default: 120000)" },
+                        "max_lines": { "type": "integer", "description": "Max output lines per host (default: 200, 0=unlimited)" },
+                        "concurrency": { "type": "integer", "description": "Max concurrent connections (default: 5, 0=unlimited)" }
+                    },
+                    "required": ["hosts", "command"]
+                }
             }
         ]
     });

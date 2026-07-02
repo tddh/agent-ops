@@ -58,6 +58,7 @@ pub async fn execute_tool(ctx: &ToolContext, tool_name: &str, args: Value) -> Re
         "pane_info" => pane_info(ctx, args).await,
         "window_info" => window_info(ctx, args).await,
         "pane_exists" => pane_exists(ctx, args).await,
+        "batch_exec" => batch_exec(ctx, args).await,
         _ => anyhow::bail!("unknown tool: {}", tool_name),
     }
 }
