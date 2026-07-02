@@ -65,30 +65,11 @@ async fn stream_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
 
 ---
 
-### 3. `split_pane` 使用错误的 `AuditAction` 变体
+### 3. `split_pane` 使用 `AuditAction::SplitWindow` 记录 ⏸️ 保持现状
 
 **位置**：`crates/agent-ops-mcp/src/tools.rs:584`，`crates/agent-ops-core/src/types.rs`
 
-**问题**：分割 pane 却记录为 `SplitWindow`。`AuditAction` 枚举中不存在 `SplitPane`。
-
-**修复方案**：
-
-1. 在 `types.rs` 的 `AuditAction` 枚举中添加：
-```rust
-pub enum AuditAction {
-    // ... existing ...
-    SplitPane,      // ← 新增
-    SplitWindow,
-}
-```
-
-2. 在 `tools.rs:584` 修改：
-```rust
-// Before:
-audit(ctx, AuditAction::SplitWindow, host_name, ...)
-// After:
-audit(ctx, AuditAction::SplitPane, host_name, ...)
-```
+**确认**：分屏功能完全正常，`{"type": "split_pane"}` 正确发送到 bridge。仅审计日志中将 `split_pane` 和 `split_window` 都记录为 `SplitWindow`（`AuditAction` 枚举无 `SplitPane` 变体）。影响范围仅限于审计日志中的操作类型区分粒度。**保持现状，待后续审计系统重构时统一处理。**
 
 ---
 
