@@ -559,23 +559,11 @@ git clone git@github.com:tddh/agent-ops.git
 
 ---
 
-### 26. `EnsureSessionPolicy::CreateOrReuse` 状态污染风险
+### 26. `EnsureSessionPolicy::CreateOrReuse` 行为 ⏸️ 保持现状
 
 **位置**：`crates/rmux-bridge/src/protocol.rs:80`
 
-**问题**：session 已存在时复用，可能带有残留 pane 状态。
-
-**修复方案**：默认行为保持不变（兼容性），但为 `session_create` 添加 `force_new` 参数：
-```rust
-// 在 MCP tool add:
-let force_new = args.get("force_new").and_then(|v| v.as_bool()).unwrap_or(false);
-let policy = if force_new {
-    EnsureSessionPolicy::CreateOnly
-} else {
-    EnsureSessionPolicy::CreateOrReuse
-};
-```
-并在 TOOLS.md 中记录此行为。
+**确认**：session 已存在时直接复用，返回第一个 window 的第一个 pane。当前设计是有意为之——Agent 频繁重连时无需重建 session，行为可预测。**保持现状。**
 
 ---
 
