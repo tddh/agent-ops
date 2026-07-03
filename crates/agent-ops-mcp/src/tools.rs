@@ -407,15 +407,25 @@ async fn file_download(ctx: &ToolContext, args: Value) -> Result<Value> {
     audit(ctx, AuditAction::FileDownload, host_name, "", None, remote_path, None, result.is_ok(), 0, None).await;
 
     match result {
-        Ok(file) => Ok(json!({
-            "ok": true,
-            "file": {
-                "uri": format!("file://{}/{}", host_name, remote_path),
-                "local_path": local_path,
-                "size": file.size,
-                "sha256": file.sha256,
+        Ok(files) => {
+            if files.len() == 1 {
+                Ok(json!({
+                    "ok": true,
+                    "file": {
+                        "uri": format!("file://{}/{}", host_name, remote_path),
+                        "local_path": files[0].path,
+                        "size": files[0].size,
+                        "sha256": files[0].sha256,
+                    }
+                }))
+            } else {
+                Ok(json!({
+                    "ok": true,
+                    "files": files,
+                    "total": files.len(),
+                }))
             }
-        })),
+        }
         Err(e) => Ok(json!({ "ok": false, "error": e.to_string() })),
     }
 }
@@ -889,11 +899,21 @@ async fn batch_download(ctx: &ToolContext, args: Value) -> Result<Value> {
                 }
             }
             match crate::files::download_file(&host, &remote, &local_path, ca_cert.as_deref(), insecure).await {
-                Ok(file) => (host_name, json!({
-                    "ok": true,
-                    "file": {"remote_path": remote, "local_path": local_path,
-                              "size": file.size, "sha256": file.sha256}
-                })),
+                Ok(files) => {
+                    if files.len() == 1 {
+                        (host_name, json!({
+                            "ok": true,
+                            "file": {"remote_path": remote, "local_path": files[0].path,
+                                      "size": files[0].size, "sha256": files[0].sha256}
+                        }))
+                    } else {
+                        (host_name, json!({
+                            "ok": true,
+                            "files": files,
+                            "total": files.len(),
+                        }))
+                    }
+                }
                 Err(e) => (host_name, json!({"ok": false, "error": e.to_string()})),
             }
         }));

@@ -199,7 +199,7 @@ pub async fn download_file(
     local_path: &str,
     ca_cert_path: Option<&str>,
     insecure: bool,
-) -> Result<FileResult> {
+) -> Result<Vec<FileResult>> {
     let (conn, _auth_send, _auth_recv) = crate::transport::connect_to_bridge_quic(
         &host.bridge_addr, &host.bridge_token, ca_cert_path, insecure,
     ).await?;
@@ -213,15 +213,29 @@ pub async fn download_file(
 
     let mut code = [0u8; 1];
     recv.read_exact(&mut code).await?;
-    if code[0] != 0x00 {
-        let mut msg_len = [0u8; 2];
-        recv.read_exact(&mut msg_len).await?;
-        let len = u16::from_le_bytes(msg_len) as usize;
-        let mut msg = vec![0u8; len];
-        recv.read_exact(&mut msg).await?;
-        bail!("download failed: {}", String::from_utf8_lossy(&msg));
+    
+    match code[0] {
+        0x00 => {
+            let result = read_single_file(&mut recv, local_path).await?;
+            Ok(vec![result])
+        }
+        0x04 => {
+            let results = read_directory(&mut recv, local_path).await?;
+            Ok(results)
+        }
+        0x02 => {
+            let mut msg_len = [0u8; 2];
+            recv.read_exact(&mut msg_len).await?;
+            let len = u16::from_le_bytes(msg_len) as usize;
+            let mut msg = vec![0u8; len];
+            recv.read_exact(&mut msg).await?;
+            bail!("download failed: {}", String::from_utf8_lossy(&msg));
+        }
+        _ => bail!("unknown response code: 0x{:02x}", code[0]),
     }
+}
 
+async fn read_single_file(recv: &mut quinn::RecvStream, local_path: &str) -> Result<FileResult> {
     let mut size_buf = [0u8; 8];
     recv.read_exact(&mut size_buf).await?;
     let file_size = u64::from_le_bytes(size_buf) as usize;
@@ -232,6 +246,10 @@ pub async fn download_file(
     let mut sha256 = [0u8; 32];
     recv.read_exact(&mut sha256).await?;
 
+    if let Some(parent) = Path::new(local_path).parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
     let mut file = tokio::fs::File::create(local_path)
         .await
         .with_context(|| format!("failed to create: {}", local_path))?;
@@ -239,12 +257,62 @@ pub async fn download_file(
     file.flush().await?;
 
     Ok(FileResult {
-        path: remote_path.to_string(),
+        path: local_path.to_string(),
         status: "downloaded".into(),
         size: Some(file_size as u64),
         sha256: Some(hex::encode(sha256)),
         error: None,
     })
+}
+
+async fn read_directory(recv: &mut quinn::RecvStream, local_base: &str) -> Result<Vec<FileResult>> {
+    let mut count_buf = [0u8; 4];
+    recv.read_exact(&mut count_buf).await?;
+    let file_count = u32::from_le_bytes(count_buf) as usize;
+
+    tokio::fs::create_dir_all(local_base).await
+        .with_context(|| format!("failed to create directory: {}", local_base))?;
+
+    let mut results = Vec::with_capacity(file_count);
+    for _ in 0..file_count {
+        let mut path_len_buf = [0u8; 2];
+        recv.read_exact(&mut path_len_buf).await?;
+        let path_len = u16::from_le_bytes(path_len_buf) as usize;
+        let mut path_buf = vec![0u8; path_len];
+        recv.read_exact(&mut path_buf).await?;
+        let rel_path = String::from_utf8_lossy(&path_buf).to_string();
+
+        let mut size_buf = [0u8; 8];
+        recv.read_exact(&mut size_buf).await?;
+        let file_size = u64::from_le_bytes(size_buf) as usize;
+        if file_size > MAX_FILE_SIZE {
+            bail!("file too large: {} bytes (max {})", file_size, MAX_FILE_SIZE);
+        }
+
+        let mut sha256 = [0u8; 32];
+        recv.read_exact(&mut sha256).await?;
+
+        let local_path = format!("{}/{}", local_base, rel_path);
+        if let Some(parent) = Path::new(&local_path).parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        let mut file = tokio::fs::File::create(&local_path)
+            .await
+            .with_context(|| format!("failed to create: {}", local_path))?;
+        tokio::io::copy(&mut recv.take(file_size as u64), &mut file).await?;
+        file.flush().await?;
+
+        results.push(FileResult {
+            path: rel_path,
+            status: "downloaded".into(),
+            size: Some(file_size as u64),
+            sha256: Some(hex::encode(sha256)),
+            error: None,
+        });
+    }
+
+    Ok(results)
 }
 
 // ─── helper functions ───

@@ -305,13 +305,13 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "file_download",
-                "description": "Download a file from remote host. Returns size and SHA256. ⚠️ Do NOT modify paths or add filters unless user explicitly requests.",
+                "description": "Download a file or directory from remote host. Auto-detects path type: single file downloads directly; directory recursively downloads all files preserving structure. Returns size and SHA256 for files, or file list for directories. ⚠️ Do NOT modify paths or add filters unless user explicitly requests.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string", "description": "Hostname, e.g. tf01" },
-                        "remote_path": { "type": "string", "description": "Remote file path to download" },
-                        "local_path": { "type": "string", "description": "Local destination path" }
+                        "remote_path": { "type": "string", "description": "Remote file or directory path to download" },
+                        "local_path": { "type": "string", "description": "Local destination path (for directories, this is the root directory)" }
                     },
                     "required": ["host", "remote_path", "local_path"]
                 }

@@ -46,7 +46,7 @@ graph LR
 | **Session management** | Create/destroy/list sessions, multi-pane splits, window layouts |
 | **Command execution** | `exec` one-shot execution (sentinel detection + exit code), interactive programs via send_keys + capture_pane |
 | **Output waiting** | `wait_for_text` for terminal text, `wait_exit` for process exit |
-| **File transfer** | Upload/download over QUIC, recursive directory upload with concurrency |
+| **File transfer** | Upload/download over QUIC, recursive directory upload and download with concurrency |
 | **Multi-host orchestration** | Host registry with group/tag/label filtering, broadcast_keys for multi-pane |
 | **Audit logging** | SQLite audit logs for every tool call, CLI query/stats/cleanup |
 

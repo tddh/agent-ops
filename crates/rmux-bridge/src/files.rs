@@ -348,10 +348,10 @@ async fn handle_download_quic(
     recv.read_exact(&mut path).await?;
     let remote_path = String::from_utf8_lossy(&path).to_string();
 
-    let mut file = match tokio::fs::File::open(&remote_path).await {
-        Ok(f) => f,
+    let meta = match tokio::fs::metadata(&remote_path).await {
+        Ok(m) => m,
         Err(e) => {
-            let msg = format!("failed to open: {}", e);
+            let msg = format!("failed to stat: {}", e);
             send.write_all(&[0x02]).await?;
             let msg_len = (msg.len() as u16).to_le_bytes();
             send.write_all(&msg_len).await?;
@@ -361,8 +361,16 @@ async fn handle_download_quic(
         }
     };
 
-    let meta = file.metadata().await?;
-    let file_size = meta.len();
+    if meta.is_dir() {
+        download_dir_quic(send, &remote_path).await
+    } else {
+        download_file_quic(send, &remote_path).await
+    }
+}
+
+async fn download_file_quic(mut send: quinn::SendStream, remote_path: &str) -> anyhow::Result<()> {
+    let mut file = tokio::fs::File::open(remote_path).await?;
+    let file_size = file.metadata().await?.len();
 
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; CHUNK_SIZE];
@@ -377,9 +385,67 @@ async fn handle_download_quic(
     send.write_all(&file_size.to_le_bytes()).await?;
     send.write_all(&hash).await?;
 
-    let mut file = tokio::fs::File::open(&remote_path).await?;
+    let mut file = tokio::fs::File::open(remote_path).await?;
     tokio::io::copy(&mut file, &mut send).await?;
     send.finish()?;
     tracing::info!("QUIC downloaded {} ({} bytes)", remote_path, file_size);
+    Ok(())
+}
+
+async fn download_dir_quic(mut send: quinn::SendStream, remote_path: &str) -> anyhow::Result<()> {
+    let base = std::path::Path::new(remote_path);
+    let mut files: Vec<(std::path::PathBuf, String)> = Vec::new();
+    collect_remote_files(base, base, &mut files, 0).await?;
+
+    send.write_all(&[0x04]).await?;
+    send.write_all(&(files.len() as u32).to_le_bytes()).await?;
+
+    for (abs_path, rel_path) in &files {
+        send.write_all(&(rel_path.len() as u16).to_le_bytes()).await?;
+        send.write_all(rel_path.as_bytes()).await?;
+
+        let mut file = tokio::fs::File::open(abs_path).await?;
+        let file_size = file.metadata().await?.len();
+
+        let mut hasher = Sha256::new();
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        loop {
+            let n = file.read(&mut buf).await?;
+            if n == 0 { break; }
+            hasher.update(&buf[..n]);
+        }
+        let hash: [u8; 32] = hasher.finalize().into();
+
+        send.write_all(&file_size.to_le_bytes()).await?;
+        send.write_all(&hash).await?;
+
+        let mut file = tokio::fs::File::open(abs_path).await?;
+        tokio::io::copy(&mut file, &mut send).await?;
+    }
+
+    send.finish()?;
+    tracing::info!("QUIC downloaded directory {} ({} files)", remote_path, files.len());
+    Ok(())
+}
+
+async fn collect_remote_files(
+    base: &std::path::Path,
+    dir: &std::path::Path,
+    files: &mut Vec<(std::path::PathBuf, String)>,
+    depth: u32,
+) -> anyhow::Result<()> {
+    if depth > 64 {
+        anyhow::bail!("directory too deep (>64): {}", dir.display());
+    }
+    let mut entries = tokio::fs::read_dir(dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if path.is_dir() {
+            Box::pin(collect_remote_files(base, &path, files, depth + 1)).await?;
+        } else {
+            let rel = path.strip_prefix(base)?.to_string_lossy().to_string();
+            files.push((path, rel));
+        }
+    }
     Ok(())
 }
