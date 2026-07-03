@@ -4,6 +4,7 @@ mod files;
 mod router;
 mod tools;
 mod transport;
+mod tunnel;
 
 use clap::Parser;
 use serde_json::{json, Value};
@@ -90,6 +91,7 @@ async fn main() -> anyhow::Result<()> {
         insecure: cli.insecure,
         audit_db,
         agent_name: std::sync::Mutex::new("unknown".to_string()),
+        tunnel_manager: Arc::new(tunnel::TunnelManager::new()),
     });
 
     let tools_definition = serde_json::json!({
@@ -619,6 +621,41 @@ async fn main() -> anyhow::Result<()> {
                         "concurrency": { "type": "integer", "description": "Max concurrent connections (default: 5, 0=unlimited)" }
                     },
                     "required": ["hosts", "remote_path", "local_dir"]
+                }
+            },
+            {
+                "name": "tunnel_create",
+                "description": "Create a local port forwarding tunnel to access remote services through QUIC encrypted channel. Opens a local TCP listener that forwards connections to a remote host:port via the bridge. Useful for accessing databases, internal APIs, or services not directly reachable.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "local_port": { "type": "integer", "description": "Local port to listen on" },
+                        "remote_host": { "type": "string", "description": "Remote target host (can be internal address)" },
+                        "remote_port": { "type": "integer", "description": "Remote target port" },
+                        "local_addr": { "type": "string", "description": "Local bind address (default: 127.0.0.1)" }
+                    },
+                    "required": ["host", "local_port", "remote_host", "remote_port"]
+                }
+            },
+            {
+                "name": "tunnel_list",
+                "description": "List all active port forwarding tunnels with their details.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
+                "name": "tunnel_close",
+                "description": "Close an active port forwarding tunnel by its ID.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "tunnel_id": { "type": "string", "description": "Tunnel ID returned by tunnel_create" }
+                    },
+                    "required": ["tunnel_id"]
                 }
             }
         ]

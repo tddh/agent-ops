@@ -702,3 +702,87 @@ Download a file from multiple hosts concurrently. Each host's file is saved to `
   }
 }
 ```
+
+---
+
+## 端口转发
+
+### `tunnel_create`
+
+创建本地端口转发隧道，通过 QUIC 加密通道访问远程主机的内部服务（如数据库、Redis、内部 API）。在本地指定地址和端口开启 TCP 监听，将连接转发到远程目标。
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|:---:|--------|------|
+| `host` | string | ✅ | — | 远程主机名 |
+| `local_port` | integer | ✅ | — | 本地监听端口 |
+| `remote_host` | string | ✅ | — | 远程目标主机（可以是内网地址） |
+| `remote_port` | integer | ✅ | — | 远程目标端口 |
+| `local_addr` | string | | `127.0.0.1` | 本地监听地址 |
+
+**返回**
+
+```json
+{
+  "ok": true,
+  "tunnel_id": "t_abc123",
+  "local_addr": "127.0.0.1:15432",
+  "remote": "db-server:5432"
+}
+```
+
+**使用示例**
+
+```
+// 访问远程数据库
+tunnel_create host="tf01" local_port=15432 remote_host="db-server" remote_port=5432
+// 然后通过 localhost:15432 连接 PostgreSQL
+
+// 访问远程内网 API
+tunnel_create host="tf01" local_port=8080 remote_host="api.internal" remote_port=8080
+// 然后通过 localhost:8080 访问 API
+```
+
+### `tunnel_list`
+
+列出所有活跃的端口转发隧道。
+
+| 参数 | 类型 | 必填 |
+|------|------|:---:|
+| 无 | | |
+
+**返回**
+
+```json
+{
+  "ok": true,
+  "tunnels": [
+    {
+      "tunnel_id": "t_abc123",
+      "local_addr": "127.0.0.1:15432",
+      "local_port": 15432,
+      "remote_host": "db-server",
+      "remote_port": 5432,
+      "created_at": "2026-07-03T12:34:56Z",
+      "active_connections": 3
+    }
+  ],
+  "count": 1
+}
+```
+
+### `tunnel_close`
+
+关闭指定的端口转发隧道。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `tunnel_id` | string | ✅ | 隧道 ID（由 tunnel_create 返回） |
+
+**返回**
+
+```json
+{
+  "ok": true,
+  "closed": "t_abc123"
+}
+```

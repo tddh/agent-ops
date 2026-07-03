@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_yamux::StreamHandle;
@@ -231,7 +231,7 @@ async fn drain_exact(stream: &mut StreamHandle, size: usize) -> Result<()> {
 // ─── QUIC stream handlers ───
 
 /// QUIC stream dispatcher: read stream type byte, route to handler.
-/// 0x01 = JSON protocol frames (LE32 length prefix), 0x02 = file upload, 0x03 = file download.
+/// 0x01 = JSON protocol frames (LE32 length prefix), 0x02 = file upload, 0x03 = file download, 0x05 = port tunnel.
 pub async fn handle_quic_stream(
     send: quinn::SendStream,
     mut recv: quinn::RecvStream,
@@ -246,6 +246,7 @@ pub async fn handle_quic_stream(
         }
         0x02 => handle_upload_quic(send, recv).await,
         0x03 => handle_download_quic(send, recv).await,
+        0x05 => handle_tunnel_quic(send, recv).await,
         t => {
             tracing::warn!("unknown QUIC stream type: 0x{:02x}", t);
             Ok(())
@@ -447,5 +448,68 @@ async fn collect_remote_files(
             files.push((path, rel));
         }
     }
+    Ok(())
+}
+
+async fn handle_tunnel_quic(
+    mut send: quinn::SendStream,
+    mut recv: quinn::RecvStream,
+) -> anyhow::Result<()> {
+    let mut host_len_buf = [0u8; 2];
+    recv.read_exact(&mut host_len_buf).await?;
+    let host_len = u16::from_le_bytes(host_len_buf) as usize;
+
+    if host_len > 253 {
+        anyhow::bail!("host name too long: {} (max 253)", host_len);
+    }
+
+    let mut host_buf = vec![0u8; host_len];
+    recv.read_exact(&mut host_buf).await?;
+    let remote_host = String::from_utf8_lossy(&host_buf).to_string();
+
+    let mut port_buf = [0u8; 2];
+    recv.read_exact(&mut port_buf).await?;
+    let remote_port = u16::from_le_bytes(port_buf);
+
+    let target = format!("{}:{}", remote_host, remote_port);
+    let tcp = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio::net::TcpStream::connect(&target),
+    )
+    .await
+    .context("TCP connect timeout")??;
+
+    let (mut tcp_read, mut tcp_write) = tcp.into_split();
+
+    let tcp_to_quic = async {
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        loop {
+            let n = tcp_read.read(&mut buf).await?;
+            if n == 0 {
+                send.finish()?;
+                break;
+            }
+            send.write_all(&buf[..n]).await?;
+        }
+        Ok::<_, anyhow::Error>(())
+    };
+
+    let quic_to_tcp = async {
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        loop {
+            match recv.read(&mut buf).await? {
+                Some(0) | None => {
+                    let _ = tcp_write.shutdown().await;
+                    break;
+                }
+                Some(n) => tcp_write.write_all(&buf[..n]).await?,
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    };
+
+    tokio::try_join!(tcp_to_quic, quic_to_tcp)?;
+
+    tracing::info!("QUIC tunnel closed: {}", target);
     Ok(())
 }

@@ -110,4 +110,7 @@ pub enum AuditAction {
     BatchExec,
     BatchUpload,
     BatchDownload,
+    TunnelCreate,
+    TunnelList,
+    TunnelClose,
 }

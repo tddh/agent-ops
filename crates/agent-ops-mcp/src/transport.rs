@@ -253,6 +253,60 @@ pub async fn connect_to_bridge_quic(
     Ok((conn, json_send, json_recv))
 }
 
+/// Establish QUIC connection to bridge for long-lived tunnels.
+/// Uses 1-hour idle timeout + 15s keepalive to prevent connection drops.
+/// Returns Connection + auth stream handles (caller must keep alive or finish).
+pub async fn connect_to_bridge_quic_tunnel(
+    bridge_addr: &str,
+    auth_token: &str,
+    ca_cert_path: Option<&str>,
+    insecure: bool,
+) -> anyhow::Result<(quinn::Connection, quinn::SendStream, quinn::RecvStream)> {
+    let addr: std::net::SocketAddr = bridge_addr
+        .parse()
+        .with_context(|| format!("invalid bridge address: {}", bridge_addr))?;
+
+    let mut endpoint = quinn::Endpoint::client("[::]:0".parse()?)?;
+
+    let tls_config = build_quic_client_config(ca_cert_path, insecure)?;
+    let mut client_config = quinn::ClientConfig::new(std::sync::Arc::new(
+        quinn::crypto::rustls::QuicClientConfig::try_from(std::sync::Arc::new(tls_config))
+            .map_err(|e| anyhow::anyhow!("QUIC TLS config error: {e}"))?,
+    ));
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_idle_timeout(Some(Duration::from_secs(3600).try_into()?));
+    transport.keep_alive_interval(Some(Duration::from_secs(15)));
+    client_config.transport_config(std::sync::Arc::new(transport));
+    endpoint.set_default_client_config(client_config);
+
+    let server_name = bridge_addr.split(':').next().unwrap_or("localhost");
+    let conn = tokio::time::timeout(
+        Duration::from_secs(10),
+        endpoint.connect(addr, server_name)?,
+    )
+    .await
+    .context("QUIC connect timeout")?
+    .context("QUIC connection failed")?;
+
+    let (mut send, mut recv) = conn
+        .open_bi()
+        .await
+        .context("failed to open QUIC auth stream")?;
+
+    send_auth_frame_quic(&mut send, auth_token).await?;
+
+    let mut response = [0u8; 3];
+    tokio::io::AsyncReadExt::read_exact(&mut recv, &mut response).await?;
+    if &response != b"OK\n" {
+        conn.close(1u32.into(), b"auth failed");
+        anyhow::bail!("bridge QUIC authentication failed");
+    }
+
+    tracing::info!("QUIC tunnel connected and authenticated to {}", bridge_addr);
+
+    Ok((conn, send, recv))
+}
+
 fn build_quic_client_config(
     ca_cert_path: Option<&str>,
     insecure: bool,

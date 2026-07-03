@@ -5,6 +5,11 @@
 ### Added
 - Bridge 请求级别日志：INFO 显示请求摘要（type/session/duration），DEBUG 显示完整请求/响应 JSON
 - Bridge `--log-level` 参数（默认 `info`，支持 trace/debug/info/warn/error，可通过 `RUST_LOG` 环境变量覆盖）
+- 端口转发功能：`tunnel_create`、`tunnel_list`、`tunnel_close` 三个 MCP 工具
+  - 通过 QUIC 隧道访问远程内网服务（数据库、API 等）
+  - 1 小时空闲超时 + 15 秒 keepalive，适合长连接场景
+  - 64KB 缓冲区，支持 TCP 半关闭处理
+  - 完整审计日志记录
 
 ## [0.1.0] — 2026-07-02
 

@@ -25,7 +25,7 @@ graph LR
     C <-->|Unix Socket| D[RMUX daemon<br/>基于 rmux]
 ```
 
-- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 39 个终端控制工具 + 操作审计 CLI
+- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 42 个终端控制工具 + 操作审计 CLI
 - **rmux-bridge** — 部署在每台目标 Linux 主机上的 TLS 加密代理，将 JSON 请求翻译为 RMUX daemon 调用
 - **RMUX daemon** — 每台 Linux 主机上的终端多路复用器（基于 rmux）
 
@@ -47,6 +47,7 @@ graph LR
 | **命令执行** | `exec` 一站式执行（sentinel 检测 + exit code 提取），支持交互式程序（send_keys + capture_pane） |
 | **输出等待** | `wait_for_text` 等待终端出现指定文本，`wait_exit` 等待进程退出 |
 | **文件传输** | QUIC 通道上传/下载，支持目录递归上传和下载 + 并发 |
+| **端口转发** | 通过 QUIC 隧道访问远程内网服务（数据库、API 等） |
 | **多主机编排** | 主机注册表 + 分组/标签/模式过滤，broadcast_keys 多窗格广播 |
 | **操作审计** | SQLite 审计日志，每次工具调用自动记录，支持 CLI 查询/统计/清理 |
 
@@ -137,7 +138,7 @@ agent-ops-mcp audit cleanup --older-than 30
 
 ## 工具列表
 
-共 39 个 MCP 工具，覆盖完整终端生命周期：
+共 42 个 MCP 工具，覆盖完整终端生命周期：
 
 | 类别 | 工具 |
 |------|------|
@@ -150,6 +151,7 @@ agent-ops-mcp audit cleanup --older-than 30
 | 窗口操作 | `split_window`, `close_window`, `rename_window`, `resize_window`, `select_window`, `select_layout`, `window_info`, `list_window_panes` |
 | 文件传输 | `file_upload`, `file_download` |
 | 批量操作 | `batch_exec`, `batch_upload`, `batch_download` |
+| 端口转发 | `tunnel_create`, `tunnel_list`, `tunnel_close` |
 
 > ⚠️ `stream_pane` 当前不可用 — MCP 协议限制。替代方案：`send_keys` + `capture_pane` 轮询。
 
@@ -176,7 +178,7 @@ just build       # cargo build --workspace
 
 ## 文档
 
-- [工具文档](docs/TOOLS.md) — 39 个 MCP 工具的完整参数与返回值
+- [工具文档](docs/TOOLS.md) — 42 个 MCP 工具的完整参数与返回值
 - [部署文档](docs/DEPLOY.md) — 架构、构建、部署、运维、安全
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)

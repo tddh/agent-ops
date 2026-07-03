@@ -47,6 +47,7 @@ graph LR
 | **Command execution** | `exec` one-shot execution (sentinel detection + exit code), interactive programs via send_keys + capture_pane |
 | **Output waiting** | `wait_for_text` for terminal text, `wait_exit` for process exit |
 | **File transfer** | Upload/download over QUIC, recursive directory upload and download with concurrency |
+| **Port forwarding** | Local port forwarding tunnels through QUIC to access remote internal services |
 | **Multi-host orchestration** | Host registry with group/tag/label filtering, broadcast_keys for multi-pane |
 | **Audit logging** | SQLite audit logs for every tool call, CLI query/stats/cleanup |
 
@@ -136,7 +137,7 @@ Audit data stored at `~/.agent-ops/audit.db`, retained 90 days, max 500 MB.
 
 ## Tools
 
-39 MCP tools covering the full terminal lifecycle:
+42 MCP tools covering the full terminal lifecycle:
 
 | Category | Tools |
 |----------|-------|
@@ -149,6 +150,7 @@ Audit data stored at `~/.agent-ops/audit.db`, retained 90 days, max 500 MB.
 | Window | `split_window`, `close_window`, `rename_window`, `resize_window`, `select_window`, `select_layout`, `window_info`, `list_window_panes` |
 | File | `file_upload`, `file_download` |
 | Batch | `batch_exec`, `batch_upload`, `batch_download` |
+| Tunnel | `tunnel_create`, `tunnel_list`, `tunnel_close` |
 
 > ⚠️ `stream_pane` 当前不可用 — MCP 协议限制。替代方案：`send_keys` + `capture_pane` 轮询。
 
@@ -175,7 +177,7 @@ just build       # cargo build --workspace
 
 ## Docs
 
-- [Tool Reference](docs/TOOLS.md) — 39 MCP tools with parameters and return values
+- [Tool Reference](docs/TOOLS.md) — 42 MCP tools with parameters and return values
 - [Deployment Guide](docs/DEPLOY.md) — Architecture, build, deploy, operations, security
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)
