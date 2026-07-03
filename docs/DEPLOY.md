@@ -23,7 +23,7 @@
 | 目标主机 | Linux x86_64，systemd，有 SSH 访问 |
 | RMUX | `rmux` daemon 已安装并运行（`curl -fsSL https://rmux.io/install.sh \| sh`） |
 | 构建机 | Rust 1.85+，`x86_64-linux-musl-gcc`（交叉编译用 `brew install FiloSottile/musl-cross/musl-cross`） |
-| 端口 | bridge 监听 9778（TLS），9779（health check，仅 localhost） |
+| 端口 | bridge 监听 9778（TLS/QUIC） |
 | 证书 | 自签名 TLS 证书（`openssl` 即可） |
 
 ## 快速开始
@@ -100,6 +100,8 @@ Type=simple
 EnvironmentFile=/opt/agent-ops/bridge.env
 ExecStart=/opt/agent-ops/rmux-bridge \
     --listen-addr 0.0.0.0:9778 \
+    --quic-listen-addr 0.0.0.0:9778 \
+    --max-connections 256 \
     --rmux-socket /tmp/rmux-1000/default \
     --tls-cert /opt/agent-ops/certs/bridge.crt \
     --tls-key /opt/agent-ops/certs/bridge.key
@@ -220,8 +222,8 @@ ssh root@<your-bridge-ip> "systemctl status rmux-bridge"
 # 查看日志
 ssh root@<your-bridge-ip> "journalctl -u rmux-bridge -f"
 
-# 健康检查（仅 localhost，需在目标主机上执行）
-ssh root@<your-bridge-ip> "curl -s http://127.0.0.1:9779/health"
+# 检查 RMUX socket 是否存在
+ssh root@<your-bridge-ip> "ls -la /tmp/rmux-*/default"
 ```
 
 ### 审计查询

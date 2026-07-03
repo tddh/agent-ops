@@ -9,7 +9,7 @@ use clap::Parser;
 use futures::StreamExt;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 use tokio_rustls::TlsAcceptor;
@@ -55,37 +55,6 @@ async fn main() -> anyhow::Result<()> {
 
     let tls_config = tls::load_tls_server_config(&config.tls_cert, &config.tls_key)?;
     let acceptor = TlsAcceptor::from(tls_config);
-
-    let health_port = config
-        .listen_addr
-        .split(':')
-        .next_back()
-        .and_then(|p| p.parse::<u16>().ok())
-        .map(|p| p + 1)
-        .unwrap_or(9779);
-    let health_addr = format!("127.0.0.1:{}", health_port);
-
-    tokio::spawn(async move {
-        let listener = match TcpListener::bind(&health_addr).await {
-            Ok(l) => l,
-            Err(e) => {
-                tracing::error!("failed to bind health check server: {}", e);
-                return;
-            }
-        };
-        tracing::info!("health check listening on {}", health_addr);
-
-        loop {
-            if let Ok((mut stream, _)) = listener.accept().await {
-                tokio::spawn(async move {
-                    let mut buf = [0u8; 4096];
-                    let _ = stream.read(&mut buf).await;
-                    let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
-                    let _ = stream.write_all(response).await;
-                });
-            }
-        }
-    });
 
     // ─── QUIC file transfer listener ───
     let quic_config = config.clone();

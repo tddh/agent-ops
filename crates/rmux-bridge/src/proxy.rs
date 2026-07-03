@@ -10,13 +10,13 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 use crate::protocol::ProtocolProxy;
+use agent_ops_core::MAX_FRAME_SIZE;
 
 #[allow(dead_code)]
 const FILE_UPLOAD_FRAME: u8 = 0x03;
 #[allow(dead_code)]
 const FILE_DOWNLOAD_FRAME: u8 = 0x04;
 
-const MAX_FRAME_SIZE: usize = 64 * 1024 * 1024; // 64 MB
 #[allow(dead_code)]
 const MAX_CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4 MB
 
@@ -263,8 +263,10 @@ where
             "resize_pane" => {
                 let sn = request["session_name"].as_str().unwrap_or("");
                 let pane_id = request["pane_id"].as_str().unwrap_or("");
-                let cols = request["cols"].as_u64().unwrap_or(80) as u16;
-                let rows = request["rows"].as_u64().unwrap_or(24) as u16;
+                let cols = u16::try_from(request["cols"].as_u64().unwrap_or(80))
+                    .map_err(|_| anyhow::anyhow!("cols must be 0-65535"))?;
+                let rows = u16::try_from(request["rows"].as_u64().unwrap_or(24))
+                    .map_err(|_| anyhow::anyhow!("rows must be 0-65535"))?;
                 protocol_proxy
                     .handle_resize_pane(sn, pane_id, cols, rows)
                     .await
@@ -319,8 +321,14 @@ where
             "resize_window" => {
                 let sn = request["session_name"].as_str().unwrap_or("");
                 let idx = request["window_index"].as_u64().unwrap_or(0) as u32;
-                let w = request["width"].as_u64().map(|v| v as u16);
-                let h = request["height"].as_u64().map(|v| v as u16);
+                let w = request["width"]
+                    .as_u64()
+                    .map(|v| u16::try_from(v).map_err(|_| anyhow::anyhow!("width must be 0-65535")))
+                    .transpose()?;
+                let h = request["height"]
+                    .as_u64()
+                    .map(|v| u16::try_from(v).map_err(|_| anyhow::anyhow!("height must be 0-65535")))
+                    .transpose()?;
                 protocol_proxy.handle_resize_window(sn, idx, w, h).await
             }
             "select_window" => {

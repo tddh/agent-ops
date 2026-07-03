@@ -3,14 +3,14 @@
 ## [Unreleased]
 
 ### Added
-- 3 个批量操作工具：`batch_exec`、`batch_upload`、`batch_download`（多主机并发执行/上传/下载）
 - Bridge 请求级别日志：INFO 显示请求摘要（type/session/duration），DEBUG 显示完整请求/响应 JSON
 - Bridge `--log-level` 参数（默认 `info`，支持 trace/debug/info/warn/error，可通过 `RUST_LOG` 环境变量覆盖）
 
 ## [0.1.0] — 2026-07-02
 
 ### Added
-- 36 MCP 工具（35 可用 + 1 开发中 `stream_pane`）
+- 39 MCP 工具（38 可用 + 1 开发中 `stream_pane`）
+- 3 个批量操作工具：`batch_exec`、`batch_upload`、`batch_download`（多主机并发执行/上传/下载）
 - QUIC 优先 + TCP/TLS 自动降级双协议传输
 - CA 签发 + 按主机独立证书的多主机 PKI 体系
 - Windows/macOS/Linux 客户端原生支持

@@ -7,7 +7,7 @@
                 "--hosts-file",
                 "/path/to/hosts.yaml",
                 "--ca-cert",
-                "/path/to/bridge.crt",
+                "/path/to/ca.crt",
                 "--audit-db", "/path/to/audit.db",
                 "--audit-retention-days", "90",
                 "--audit-max-size-mb", "500",
