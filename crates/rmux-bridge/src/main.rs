@@ -33,12 +33,18 @@ async fn handle_stream(mut stream: StreamHandle) -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    let config = config::BridgeConfig::parse();
+
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&config.log_level)),
+        )
+        .init();
 
     // quinn needs explicit crypto provider in musl builds
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let config = config::BridgeConfig::parse();
     tracing::info!("rmux-bridge starting on {}", config.listen_addr);
 
     let conn_limit = if config.max_connections > 0 {

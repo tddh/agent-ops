@@ -65,6 +65,18 @@ where
         };
 
         let req_type = request["type"].as_str().unwrap_or("");
+        let session_name = request["session_name"].as_str().unwrap_or("");
+        let pane_id = request["pane_id"].as_str().unwrap_or("");
+
+        tracing::debug!(
+            type = req_type,
+            session = session_name,
+            pane = pane_id,
+            request = %request,
+            "request received"
+        );
+
+        let start = std::time::Instant::now();
 
         // file_upload: DEPRECATED — use QUIC file transfer instead
         if req_type == "file_upload" {
@@ -339,6 +351,27 @@ where
             }
             _ => json!({"error": format!("unknown request type: {}", req_type)}),
         };
+
+        let elapsed = start.elapsed();
+        let ok = response["ok"].as_bool().unwrap_or_else(|| {
+            !response
+                .as_object()
+                .is_some_and(|o| o.contains_key("error"))
+        });
+
+        tracing::info!(
+            type = req_type,
+            session = session_name,
+            pane = pane_id,
+            duration_ms = elapsed.as_millis() as u64,
+            ok = ok,
+            "request completed"
+        );
+        tracing::debug!(
+            type = req_type,
+            response = %response,
+            "response sent"
+        );
 
         send_response(&writer, &response).await?;
         handled = true;

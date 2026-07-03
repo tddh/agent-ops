@@ -136,6 +136,7 @@ ssh root@<your-bridge-ip> "systemctl status rmux-bridge --no-pager"
 | `--tls-cert` | `certs/<host>.crt` | TLS 证书路径（CA 签发） |
 | `--tls-key` | `certs/<host>.key` | TLS 私钥路径 |
 | `--auth-token` | 环境变量 `BRIDGE_AUTH_TOKEN` | 认证令牌 |
+| `--log-level` | `info` | 日志级别：trace/debug/info/warn/error（`RUST_LOG` 环境变量） |
 
 > **QUIC/TCP 共享 9778 端口**：MCP client 优先使用 QUIC，UDP 被防火墙阻断时自动降级 TCP/TLS。
 

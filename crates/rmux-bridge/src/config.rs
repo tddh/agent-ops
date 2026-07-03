@@ -36,4 +36,8 @@ pub struct BridgeConfig {
     /// Maximum concurrent connections (TCP + QUIC each). 0 = unlimited.
     #[arg(long, default_value = "256", env = "MAX_CONNECTIONS")]
     pub max_connections: usize,
+
+    /// Log level: trace, debug, info, warn, error.
+    #[arg(long, default_value = "info", env = "RUST_LOG")]
+    pub log_level: String,
 }

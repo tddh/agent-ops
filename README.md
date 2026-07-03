@@ -22,12 +22,12 @@ The three layers: **Protocol layer** (MCP standard interface, works with any AI 
 graph LR
     A[AI Client] <-->|MCP stdio| B[agent-ops-mcp<br/>macOS/Linux/Windows]
     B <-->|QUIC/TCP :9778<br/>terminal ops + file transfer| C[rmux-bridge<br/>Linux host]
-    C <-->|Unix Socket| D[RMUX daemon<br/>tmux-based]
+    C <-->|Unix Socket| D[RMUX daemon<br/>rmux-based]
 ```
 
 - **agent-ops-mcp** — MCP Server running alongside the AI client, providing 39 terminal control tools + audit CLI
 - **rmux-bridge** — TLS-encrypted proxy deployed on each target Linux host, translating JSON requests to RMUX daemon calls
-- **RMUX daemon** — Terminal multiplexer on each Linux host (tmux-based)
+- **RMUX daemon** — Terminal multiplexer on each Linux host (rmux-based)
 
 **Dependencies by component:**
 
@@ -35,7 +35,7 @@ graph LR
 |-----------|---------|------------|
 | `agent-ops-mcp` | AI client machine (macOS/Linux/Windows) | Nothing — just the binary |
 | `rmux-bridge` | Each target Linux host | **RMUX daemon** (`curl -fsSL https://rmux.io/install.sh \| sh`) |
-| RMUX daemon | Each target Linux host | tmux (usually pre-installed) |
+| RMUX daemon | Each target Linux host | rmux (needs installation) |
 
 > 💡 The bridge auto-detects the RMUX socket path during deployment. Nothing to configure manually.
 
