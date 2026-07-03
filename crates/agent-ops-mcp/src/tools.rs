@@ -1,7 +1,6 @@
 use agent_ops_core::types::{AuditAction, AuditEvent};
 use anyhow::{Context, Result};
 use chrono::Utc;
-use regex;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -555,10 +554,10 @@ where
                     if t.starts_with(command) || t == command { return false; }
                     if t.starts_with("echo") && t.contains(&sentinel_marker) { return false; }
                     if t.starts_with('[') && t.len() >= 4
-                        && t.as_bytes().get(1).map_or(false, |b| b.is_ascii_hexdigit())
-                        && t.as_bytes().get(2).map_or(false, |b| b.is_ascii_hexdigit())
-                        && t.as_bytes().get(3).map_or(false, |b| b.is_ascii_hexdigit())
-                        && t.get(4..).map_or(false, |s| s == "]" || s.starts_with(" "))
+                        && t.as_bytes().get(1).is_some_and(|b| b.is_ascii_hexdigit())
+                        && t.as_bytes().get(2).is_some_and(|b| b.is_ascii_hexdigit())
+                        && t.as_bytes().get(3).is_some_and(|b| b.is_ascii_hexdigit())
+                        && t.get(4..).is_some_and(|s| s == "]" || s.starts_with(" "))
                     {
                         return false;
                     }
@@ -631,12 +630,6 @@ async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
         "duration_ms": result.duration_ms,
         "error": result.error,
     }))
-}
-
-/// 内部 session_attach（不记 audit）
-async fn session_attach_inner(stream: &mut BridgeStream, session_name: &str) -> Result<Value> {
-    send_json_frame(stream, &json!({ "type": "attach_session", "session_name": session_name })).await?;
-    recv_json_frame(stream).await
 }
 
 /// 内部 session_create（不记 audit）
@@ -1124,6 +1117,7 @@ async fn pane_exists(ctx: &ToolContext, args: Value) -> Result<Value> {
     Ok(response)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn audit(
     ctx: &ToolContext,
     action: AuditAction,

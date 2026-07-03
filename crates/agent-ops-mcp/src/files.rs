@@ -99,7 +99,7 @@ async fn upload_single(
         0x00 => Ok(FileResult {
             path: remote_path.to_string(), status: "uploaded".into(),
             size: Some(u64::from_le_bytes(written)),
-            sha256: Some(hex::encode(&sha256)), error: None,
+            sha256: Some(hex::encode(sha256)), error: None,
         }),
         0x01 => Ok(FileResult {
             path: remote_path.to_string(), status: "skipped".into(),
@@ -163,7 +163,7 @@ async fn upload_dir(
                 0x00 => FileResult {
                     path: remote.clone(), status: "uploaded".into(),
                     size: Some(u64::from_le_bytes(written)),
-                    sha256: Some(hex::encode(&sha256)), error: None,
+                    sha256: Some(hex::encode(sha256)), error: None,
                 },
                 0x01 => FileResult {
                     path: remote.clone(), status: "skipped".into(),
@@ -242,7 +242,7 @@ pub async fn download_file(
         path: remote_path.to_string(),
         status: "downloaded".into(),
         size: Some(file_size as u64),
-        sha256: Some(hex::encode(&sha256)),
+        sha256: Some(hex::encode(sha256)),
         error: None,
     })
 }
