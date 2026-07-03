@@ -68,7 +68,8 @@ pub fn load_quic_server_config(
             .map_err(|e| anyhow::anyhow!("failed to create QUIC crypto config: {}", e))?;
 
     let mut server_config = quinn::ServerConfig::with_crypto(std::sync::Arc::new(quic_crypto));
-    let transport = std::sync::Arc::get_mut(&mut server_config.transport).unwrap();
+    let transport = std::sync::Arc::get_mut(&mut server_config.transport)
+        .ok_or_else(|| anyhow::anyhow!("transport Arc is shared, cannot mutate"))?;
     transport.max_concurrent_bidi_streams(256u32.into());
 
     Ok(server_config)
