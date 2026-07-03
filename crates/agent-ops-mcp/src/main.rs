@@ -95,8 +95,8 @@ async fn main() -> anyhow::Result<()> {
     let tools_definition = serde_json::json!({
         "tools": [
             {
-                "name": "_usage_rules",
-                "description": "⚠️ IMPORTANT agent-ops usage rules: (1) send_text puts text in input buffer WITHOUT executing — always follow with exec or send_keys Enter to run. (2) Multiple send_text calls without exec will concatenate on the same line. (3) exec automatically clears leftover input before running. (4) Do NOT combine commands with && / ; / | unless the user explicitly asks — run commands one at a time. (5) If the user has explicit formatting or execution requirements, follow them exactly.",
+                "name": "agent_ops_usage_rules",
+                "description": "⚠️ READ-ONLY: Do NOT call this tool. Role: SRE engineer operating remote Linux hosts. Principles: (1) Verify before destructive operations (2) Follow user's explicit requirements (3) Use default session 'agent-ops' unless specified.",
                 "inputSchema": { "type": "object", "properties": {}, "required": [] }
             },
             {
@@ -110,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "group": { "type": "string" },
+                        "group": { "type": "string", "description": "Group name, e.g. production" },
                         "tags": { "type": "array", "items": { "type": "string" } },
                         "label_key": { "type": "string" },
                         "label_value": { "type": "string" },
@@ -124,8 +124,8 @@ async fn main() -> anyhow::Result<()> {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "host": { "type": "string" },
-                        "session_name": { "type": "string", "description": "Optional, default: agent-ops" }
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "session_name": { "type": "string", "description": "Session name, default: agent-ops" }
                     },
                     "required": ["host"]
                 }
@@ -135,25 +135,31 @@ async fn main() -> anyhow::Result<()> {
                 "description": "List all active sessions on a host",
                 "inputSchema": {
                     "type": "object",
-                    "properties": { "host": { "type": "string" } },
+                    "properties": { "host": { "type": "string", "description": "Hostname, e.g. tf01" } },
                     "required": ["host"]
                 }
             },
             {
                 "name": "session_attach",
-                "description": "Check if a session exists (check-only, no real attach)",
+                "description": "Check if a session exists (check-only, does NOT actually attach)",
                 "inputSchema": {
                     "type": "object",
-                    "properties": { "host": { "type": "string" }, "session_name": { "type": "string" } },
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "session_name": { "type": "string", "description": "Session name, e.g. agent-ops" }
+                    },
                     "required": ["host", "session_name"]
                 }
             },
             {
                 "name": "session_detach",
-                "description": "Check if a session exists (check-only, no real detach)",
+                "description": "Check if a session exists (check-only, does NOT actually detach)",
                 "inputSchema": {
                     "type": "object",
-                    "properties": { "host": { "type": "string" }, "session_name": { "type": "string" } },
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "session_name": { "type": "string", "description": "Session name, e.g. agent-ops" }
+                    },
                     "required": ["host", "session_name"]
                 }
             },
@@ -163,10 +169,10 @@ async fn main() -> anyhow::Result<()> {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "host": { "type": "string" },
-                        "session_name": { "type": "string" },
-                        "pane_id": { "type": "string" },
-                        "keys": { "type": "string" }
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "session_name": { "type": "string", "description": "Session name, e.g. agent-ops" },
+                        "pane_id": { "type": "string", "description": "Pane ID, e.g. %0" },
+                        "keys": { "type": "string", "description": "Key sequence, e.g. \\n=Enter, \\x03=Ctrl-C" }
                     },
                     "required": ["host", "session_name", "pane_id", "keys"]
                 }
@@ -177,9 +183,9 @@ async fn main() -> anyhow::Result<()> {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "host": { "type": "string" },
-                        "session_name": { "type": "string" },
-                        "pane_id": { "type": "string" },
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "session_name": { "type": "string", "description": "Session name, e.g. agent-ops" },
+                        "pane_id": { "type": "string", "description": "Pane ID, e.g. %0" },
                         "max_lines": { "type": "integer", "description": "Default 200, 0=unlimited" }
                     },
                     "required": ["host", "session_name", "pane_id"]
@@ -288,9 +294,9 @@ async fn main() -> anyhow::Result<()> {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "host": { "type": "string" },
-                        "local_path": { "type": "string" },
-                        "remote_path": { "type": "string" },
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "local_path": { "type": "string", "description": "Local file/directory path" },
+                        "remote_path": { "type": "string", "description": "Remote destination path" },
                         "overwrite": { "type": "string", "description": "overwrite|skip|rename|error (default: overwrite)" },
                         "exclude": { "type": "array", "items": { "type": "string" }, "description": "Glob patterns, e.g. [\"*.log\"]. Only if user specifies." }
                     },
@@ -303,9 +309,9 @@ async fn main() -> anyhow::Result<()> {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "host": { "type": "string" },
-                        "remote_path": { "type": "string" },
-                        "local_path": { "type": "string" }
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "remote_path": { "type": "string", "description": "Remote file path to download" },
+                        "local_path": { "type": "string", "description": "Local destination path" }
                     },
                     "required": ["host", "remote_path", "local_path"]
                 }
@@ -316,10 +322,10 @@ async fn main() -> anyhow::Result<()> {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "host": { "type": "string" },
-                        "session_name": { "type": "string" },
-                        "pane_id": { "type": "string" },
-                        "command": { "type": "string" },
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "session_name": { "type": "string", "description": "Session name, default: agent-ops" },
+                        "pane_id": { "type": "string", "description": "Pane ID, e.g. %0" },
+                        "command": { "type": "string", "description": "Shell command, e.g. ls -la" },
                         "timeout_ms": { "type": "number", "description": "Default 30000" },
                         "max_lines": { "type": "integer", "description": "Default 200, 0=unlimited" },
                         "clear_screen": { "type": "boolean", "description": "Clear pane before running" }
@@ -576,8 +582,8 @@ async fn main() -> anyhow::Result<()> {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "hosts": { "type": "array", "items": { "type": "string" }, "description": "Hostname list, max 64" },
-                        "command": { "type": "string", "description": "Command to execute on each host" },
+                        "hosts": { "type": "array", "items": { "type": "string" }, "description": "Hostname list, e.g. [\"tf01\", \"dns-backup\"]" },
+                        "command": { "type": "string", "description": "Command to run on each host" },
                         "timeout_ms": { "type": "number", "description": "Per-host timeout in ms (default: 120000)" },
                         "max_lines": { "type": "integer", "description": "Max output lines per host (default: 200, 0=unlimited)" },
                         "concurrency": { "type": "integer", "description": "Max concurrent connections (default: 5, 0=unlimited)" }
