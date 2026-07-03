@@ -25,7 +25,7 @@ graph LR
     C <-->|Unix Socket| D[RMUX daemon<br/>rmux-based]
 ```
 
-- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 39 terminal control tools + audit CLI
+- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 60 terminal control tools + audit CLI
 - **rmux-bridge** — TLS-encrypted proxy deployed on each target Linux host, translating JSON requests to RMUX daemon calls
 - **RMUX daemon** — Terminal multiplexer on each Linux host (rmux-based)
 
@@ -137,17 +137,19 @@ Audit data stored at `~/.agent-ops/audit.db`, retained 90 days, max 500 MB.
 
 ## Tools
 
-42 MCP tools covering the full terminal lifecycle:
+60 MCP tools covering the full terminal lifecycle:
 
 | Category | Tools |
 |----------|-------|
 | Host | `host_list`, `host_filter` |
 | Session | `session_create`, `session_list`, `session_attach`, `session_detach`, `kill_session` |
 | Input | `send_keys`, `send_text`, `broadcast_keys` |
-| Output | `capture_pane`, `wait_for_text`, `find_pane_text`, `stream_pane` |
-| Execution | `exec`, `wait_exit`, `spawn_command`, `shell_command`, `respawn_pane`, `cmd_escape` |
-| Pane | `split_pane`, `resize_pane`, `set_pane_title`, `close_pane`, `pane_info`, `pane_exists` |
+| Output | `capture_pane`, `capture_region`, `wait_for_text`, `wait_for_bytes`, `find_pane_text`, `find_text_all`, `stream_pane` |
+| Execution | `exec`, `wait_exit`, `wait_stable`, `collect_until_exit`, `spawn_command`, `shell_command`, `respawn_pane`, `cmd_escape` |
+| Pane | `split_pane`, `split_pane_with`, `break_pane`, `join_pane`, `swap_pane`, `resize_pane`, `set_pane_title`, `get_pane_title`, `clear_history`, `close_pane`, `pane_info`, `pane_exists` |
 | Window | `split_window`, `close_window`, `rename_window`, `resize_window`, `select_window`, `select_layout`, `window_info`, `list_window_panes` |
+| Discovery | `find_panes`, `find_sessions`, `get_pane_by_title`, `host_capabilities` |
+| Buffer | `list_buffers`, `paste_buffer`, `delete_buffer` |
 | File | `file_upload`, `file_download` |
 | Batch | `batch_exec`, `batch_upload`, `batch_download` |
 | Tunnel | `tunnel_create`, `tunnel_list`, `tunnel_close` |
@@ -177,7 +179,7 @@ just build       # cargo build --workspace
 
 ## Docs
 
-- [Tool Reference](docs/TOOLS.md) — 42 MCP tools with parameters and return values
+- [Tool Reference](docs/TOOLS.md) — 60 MCP tools with parameters and return values
 - [Deployment Guide](docs/DEPLOY.md) — Architecture, build, deploy, operations, security
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)

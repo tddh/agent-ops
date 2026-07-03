@@ -177,8 +177,15 @@ where
                 let sn = request["session_name"].as_str().unwrap_or("");
                 let pane_id = request["pane_id"].as_str().unwrap_or("");
                 let max_lines = request["max_lines"].as_u64().map(|v| v as usize);
+                let ansi = request["ansi"].as_bool();
+                let start_line = request["start_line"].as_i64();
+                let end_line = request["end_line"].as_i64();
+                let join_wrapped = request["join_wrapped"].as_bool();
+                let preserve_spaces = request["preserve_spaces"].as_bool();
+                let alternate = request["alternate"].as_bool();
+                let buffer_name = request["buffer_name"].as_str().map(String::from);
                 protocol_proxy
-                    .handle_capture_pane(sn, pane_id, max_lines)
+                    .handle_capture_pane(sn, pane_id, max_lines, ansi, start_line, end_line, join_wrapped, preserve_spaces, alternate, buffer_name)
                     .await
             }
             "wait_for_text" => {
@@ -226,7 +233,18 @@ where
             "respawn_pane" => {
                 let sn = request["session_name"].as_str().unwrap_or("");
                 let pane_id = request["pane_id"].as_str().unwrap_or("");
-                protocol_proxy.handle_respawn_pane(sn, pane_id).await
+                let command = request["command"].as_str().map(String::from);
+                let args: Option<Vec<String>> = request["args"].as_array().map(|a| {
+                    a.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+                });
+                let shell = request["shell"].as_bool();
+                let cwd = request["cwd"].as_str().map(String::from);
+                let env = request.get("env").cloned();
+                let kill = request["kill"].as_bool();
+                let keep_alive_on_exit = request["keep_alive_on_exit"].as_bool();
+                protocol_proxy
+                    .handle_respawn_pane(sn, pane_id, command, args, shell, cwd, env, kill, keep_alive_on_exit)
+                    .await
             }
             "broadcast_keys" => {
                 let sn = request["session_name"].as_str().unwrap_or("");
@@ -356,6 +374,136 @@ where
                 let sn = request["session_name"].as_str().unwrap_or("");
                 let pane_id = request["pane_id"].as_str().unwrap_or("");
                 protocol_proxy.handle_pane_exists(sn, pane_id).await
+            }
+            "find_panes" => protocol_proxy.handle_find_panes(&request).await,
+            "find_sessions" => protocol_proxy.handle_find_sessions(&request).await,
+            "get_pane_title" => {
+                let sn = request["session_name"].as_str().unwrap_or("");
+                let pane_id = request["pane_id"].as_str().unwrap_or("");
+                protocol_proxy.handle_get_pane_title(sn, pane_id).await
+            }
+            "find_text_all" => {
+                let sn = request["session_name"].as_str().unwrap_or("");
+                let pane_id = request["pane_id"].as_str().unwrap_or("");
+                let pattern = request["pattern"].as_str().unwrap_or("");
+                protocol_proxy
+                    .handle_find_text_all(sn, pane_id, pattern)
+                    .await
+            }
+            "clear_history" => {
+                let sn = request["session_name"].as_str().unwrap_or("");
+                let pane_id = request["pane_id"].as_str().unwrap_or("");
+                protocol_proxy.handle_clear_history(sn, pane_id).await
+            }
+            "list_buffers" => protocol_proxy.handle_list_buffers().await,
+            "paste_buffer" => {
+                let sn = request["session_name"].as_str().unwrap_or("");
+                let pane_id = request["pane_id"].as_str().unwrap_or("");
+                let buffer_name = request["buffer_name"].as_str().unwrap_or("");
+                protocol_proxy.handle_paste_buffer(sn, pane_id, buffer_name).await
+            }
+            "delete_buffer" => {
+                let buffer_name = request["buffer_name"].as_str().unwrap_or("");
+                protocol_proxy.handle_delete_buffer(buffer_name).await
+            }
+            "split_pane_with" => {
+                let sn = request["session_name"].as_str().unwrap_or("");
+                let pane_id = request["pane_id"].as_str().unwrap_or("");
+                let direction = request["direction"].as_str().unwrap_or("horizontal");
+                let command = request["command"].as_str().unwrap_or("");
+                let args: Vec<String> = request["args"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let shell = request["shell"].as_bool().unwrap_or(true);
+                let cwd = request["cwd"].as_str().map(String::from);
+                let env = request.get("env").cloned();
+                let title = request["title"].as_str().map(String::from);
+                let keep_alive_on_exit = request["keep_alive_on_exit"].as_bool();
+                protocol_proxy
+                    .handle_split_pane_with(sn, pane_id, direction, command, &args, shell, cwd, env, title, keep_alive_on_exit)
+                    .await
+            }
+            "get_pane_by_title" => {
+                let title = request["title"].as_str().unwrap_or("");
+                protocol_proxy.handle_get_pane_by_title(title).await
+            }
+            "collect_until_exit" => {
+                let sn = request["session_name"].as_str().unwrap_or("");
+                let pane_id = request["pane_id"].as_str().unwrap_or("");
+                let max_bytes = request["max_bytes"].as_u64().unwrap_or(1048576) as usize;
+                let timeout_ms = request["timeout_ms"].as_u64().unwrap_or(60000);
+                let starting_at = request["starting_at"].as_str().unwrap_or("now");
+                protocol_proxy
+                    .handle_collect_until_exit(sn, pane_id, max_bytes, timeout_ms, starting_at)
+                    .await
+            }
+            "break_pane" => {
+                let sn = request["session_name"].as_str().unwrap_or("");
+                let pane_id = request["pane_id"].as_str().unwrap_or("");
+                let destination_window = request["destination_window"].as_u64().map(|v| v as u32);
+                let detached = request["detached"].as_bool().unwrap_or(false);
+                protocol_proxy
+                    .handle_break_pane(sn, pane_id, destination_window, detached)
+                    .await
+            }
+            "join_pane" => {
+                let sn = request["session_name"].as_str().unwrap_or("");
+                let source_pane_id = request["source_pane_id"].as_str().unwrap_or("");
+                let target_pane_id = request["target_pane_id"].as_str().unwrap_or("");
+                let direction = request["direction"].as_str();
+                let size = request["size"].as_u64().map(|v| v as u32);
+                protocol_proxy
+                    .handle_join_pane(sn, source_pane_id, target_pane_id, direction, size)
+                    .await
+            }
+            "swap_pane" => {
+                let sn = request["session_name"].as_str().unwrap_or("");
+                let source_pane_id = request["source_pane_id"].as_str().unwrap_or("");
+                let target_pane_id = request["target_pane_id"].as_str().unwrap_or("");
+                let detached = request["detached"].as_bool().unwrap_or(false);
+                protocol_proxy
+                    .handle_swap_pane(sn, source_pane_id, target_pane_id, detached)
+                    .await
+            }
+            "capabilities" => {
+                let check = request["check"].as_str();
+                protocol_proxy.handle_capabilities(check).await
+            }
+            "capture_region" => {
+                let sn = request["session_name"].as_str().unwrap_or("");
+                let pane_id = request["pane_id"].as_str().unwrap_or("");
+                let row = request["row"].as_u64().and_then(|v| u16::try_from(v).ok());
+                let col = request["col"].as_u64().and_then(|v| u16::try_from(v).ok());
+                let rows = request["rows"].as_u64().and_then(|v| u16::try_from(v).ok());
+                let cols = request["cols"].as_u64().and_then(|v| u16::try_from(v).ok());
+                let styled = request["styled"].as_bool().unwrap_or(false);
+                protocol_proxy
+                    .handle_capture_region(sn, pane_id, row, col, rows, cols, styled)
+                    .await
+            }
+            "wait_for_bytes" => {
+                let sn = request["session_name"].as_str().unwrap_or("");
+                let pane_id = request["pane_id"].as_str().unwrap_or("");
+                let bytes_b64 = request["bytes"].as_str().unwrap_or("");
+                let only_new = request["only_new"].as_bool().unwrap_or(false);
+                let timeout_ms = request["timeout_ms"].as_u64().unwrap_or(30000);
+                protocol_proxy
+                    .handle_wait_for_bytes(sn, pane_id, bytes_b64, only_new, timeout_ms)
+                    .await
+            }
+            "wait_stable" => {
+                let sn = request["session_name"].as_str().unwrap_or("");
+                let pane_id = request["pane_id"].as_str().unwrap_or("");
+                let stable_ms = request["stable_ms"].as_u64().unwrap_or(500);
+                let timeout_ms = request["timeout_ms"].as_u64().unwrap_or(30000);
+                protocol_proxy
+                    .handle_wait_stable(sn, pane_id, stable_ms, timeout_ms)
+                    .await
             }
             _ => json!({"error": format!("unknown request type: {}", req_type)}),
         };

@@ -162,6 +162,128 @@
 
 ---
 
+### `find_text_all`
+
+搜索可见文本中**所有**匹配（包括同一行上的重叠匹配）。`find_pane_text` 只返回第一个，此工具返回全部。
+
+| 参数 | 类型 | 必填 |
+|------|------|:---:|
+| `host` | string | ✅ |
+| `session_name` | string | ✅ |
+| `pane_id` | string | ✅ |
+| `pattern` | string | ✅ |
+
+**返回** `{"ok": true, "matches": [{"start_row": 5, "start_col": 0, "end_row": 5, "end_col": 5, "text": "ERROR"}], "count": 2}`
+
+---
+
+### `wait_for_bytes`
+
+等待原始字节流中出现指定模式。比 `wait_for_text` 更底层，可匹配 ANSI 序列和控制字符。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `host` | string | ✅ | |
+| `session_name` | string | ✅ | |
+| `pane_id` | string | ✅ | |
+| `bytes` | string | ✅ | base64 编码的目标字节串 |
+| `only_new` | boolean | | 仅匹配新数据（跳过历史），默认 false |
+| `timeout_ms` | number | | 默认 30000 |
+
+**返回** `{"ok": true, "found": true}`
+
+超时：`{"ok": false, "found": false, "error": "..."}`
+
+---
+
+## 发现与查询
+
+跨 session/pane 的发现和过滤。
+
+### `find_panes`
+
+跨 session 按标题、命令、工作目录或进程状态发现 pane。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `host` | string | ✅ | 主机名 |
+| `session_name` | string | | 按 session 过滤 |
+| `title` | string | | 标题精确匹配 |
+| `title_prefix` | string | | 标题前缀匹配 |
+| `command_contains` | string | | 命令包含此字符串 |
+| `cwd_contains` | string | | 工作目录包含此字符串 |
+| `window_index` | integer | | 按窗口索引过滤 |
+| `running` | boolean | | 仅运行中 |
+| `exited` | boolean | | 仅已退出 |
+
+**返回** `{"ok": true, "panes": [{"pane_id": "%2", "session_name": "agent-ops", "window_index": 0, "title": "nginx-log", "command": [...], "working_directory": "/var/log", "process": "running", "pid": 12345}], "count": 1}`
+
+### `find_sessions`
+
+按名称发现 session。**与 `session_list` 的区别**：`session_list` 仅返回名称列表，`find_sessions` 返回 live handle，适合后续查询 pane 和窗口。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `host` | string | ✅ | 主机名 |
+| `name` | string | | session 名称（省略返回全部） |
+
+**返回** `{"ok": true, "sessions": [{"session_name": "agent-ops"}], "count": 1}`
+
+### `get_pane_title`
+
+获取指定 pane 的标题。配合 `set_pane_title` 使用。
+
+| 参数 | 类型 | 必填 |
+|------|------|:---:|
+| `host` | string | ✅ |
+| `session_name` | string | ✅ |
+| `pane_id` | string | ✅ |
+
+**返回** `{"ok": true, "pane_id": "%0", "title": "nginx-log"}` — 无标题时 `"title": null`
+
+### `get_pane_by_title`
+
+按标题精确查找单个 pane（要求恰好 1 个匹配，0 或多个均报错）。
+
+| 参数 | 类型 | 必填 |
+|------|------|:---:|
+| `host` | string | ✅ |
+| `title` | string | ✅ |
+
+**返回** `{"ok": true, "found": true, "pane": {"pane_id": "%2", "session_name": "agent-ops", "title": "nginx-log", ...}}`
+
+### `host_capabilities`
+
+查询主机 daemon 支持的功能列表。在执行高级操作（如 web share 等）前验证兼容性。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `host` | string | ✅ | 主机名 |
+| `check` | string | | 检查特定 capability（可选，如 `"sixel"`） |
+
+**返回** `{"ok": true, "capabilities": ["web.share", "sdk.waits", ...], "count": 20}` — 指定 `check` 时额外返回 `"has_capability": true/false`
+
+### `capture_region`
+
+捕获 pane 矩形区域或全屏截图。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `host` | string | ✅ | |
+| `session_name` | string | ✅ | |
+| `pane_id` | string | ✅ | |
+| `row` | integer | | 起始行（0-based） |
+| `col` | integer | | 起始列（0-based） |
+| `rows` | integer | | 高度（行数） |
+| `cols` | integer | | 宽度（列数） |
+| `styled` | boolean | | 保留样式标记，默认 false |
+
+四个坐标参数要么全传（矩形区域），要么全不传（全屏截图）。部分传参报错。
+
+**返回** `{"ok": true, "text": "...", "styled": false}`
+
+---
+
 ## 命令执行
 
 ### `exec`
@@ -200,6 +322,41 @@
 
 **返回** `{"ok": true, "exited": true, "exit_code": 0, "signal": null}`
 
+### `collect_until_exit`
+
+收集 pane 从此刻到进程退出的全部输出。比 `exec` 的哨兵轮询方式更高效，适合大输出量的命令。
+
+> ⚠️ Pane 进程**必须先已运行**（通过 `spawn_command` 或 `exec` 启动）。输出以 base64 编码返回。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `host` | string | ✅ | |
+| `session_name` | string | ✅ | |
+| `pane_id` | string | ✅ | |
+| `max_bytes` | integer | | 最大收集字节数，默认 1048576 (1MB) |
+| `timeout_ms` | number | | 超时毫秒数，默认 60000 |
+| `starting_at` | string | | `"now"`（默认，从最新输出后开始）或 `"oldest"`（从保留的最旧输出开始） |
+
+**返回** `{"ok": true, "output": "<base64>", "collected_bytes": 4096, "exit_code": 0, "signal": null, "truncated": false, "duration_ms": 1234}`
+
+---
+
+### `wait_stable`
+
+等待 pane 输出稳定（无变化持续指定毫秒）。适合在 `exec` 或 `send_keys` 发送命令后，等终端渲染完成再 capture。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `host` | string | ✅ | |
+| `session_name` | string | ✅ | |
+| `pane_id` | string | ✅ | |
+| `stable_ms` | number | | 稳定持续毫秒数，默认 500 |
+| `timeout_ms` | number | | 最大等待毫秒数，默认 30000 |
+
+**返回** `{"ok": true, "stable": true}`
+
+超时：`{"ok": false, "stable": false, "error": "timeout: pane did not stabilize within ..."}`
+
 ---
 
 ## 窗格操作
@@ -229,6 +386,22 @@
 
 > **注意**：`split_window` 创建全新空 window，不含额外 pane。如需 pane 级别的左右/上下分屏，请用 `split_pane`。
 
+### `split_pane_with`
+
+分屏并同时在新 pane 中启动命令（原子操作，避免先分屏再 spawn 的中间状态）。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `host` | string | ✅ | |
+| `session_name` | string | ✅ | |
+| `pane_id` | string | ✅ | |
+| `direction` | string | ✅ | `horizontal` 或 `vertical` |
+| `command` | string | ✅ | 在新 pane 中运行的命令 |
+| `args` | string[] | | 命令参数 |
+| `shell` | boolean | | `true`=通过 `/bin/sh -c` 执行，默认 `true` |
+
+**返回** `{"ok": true, "new_pane_id": "%N"}`
+
 ### `resize_pane`
 
 调整窗格尺寸（列数 × 行数）。
@@ -252,6 +425,16 @@
 | `pane_id` | string | ✅ |
 | `title` | string | ✅ |
 
+### `clear_history`
+
+清除 pane 滚动历史。与 `exec` 的 `clear_screen` 不同（后者仅清可见区域），此工具移除全部保留的输出。
+
+| 参数 | 类型 | 必填 |
+|------|------|:---:|
+| `host` | string | ✅ |
+| `session_name` | string | ✅ |
+| `pane_id` | string | ✅ |
+
 ### `close_pane`
 
 关闭窗格（杀死 pane 进程）。
@@ -263,6 +446,43 @@
 | `pane_id` | string | ✅ | 窗格 ID，如 `%4` |
 
 **返回** `{"ok": true, "closed": true}`
+
+### `break_pane`
+
+将 pane 从当前窗口分离为独立窗口（或移到指定窗口）。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `host` | string | ✅ | |
+| `session_name` | string | ✅ | |
+| `pane_id` | string | | 源 pane（省略则使用当前活跃 pane） |
+| `destination_window` | integer | | 目标窗口索引（省略则创建新窗口） |
+| `detached` | boolean | | 不切换焦点到新窗口（默认 false） |
+
+### `join_pane`
+
+将 pane 移动到另一个窗口，拆分到目标 pane 旁边。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `host` | string | ✅ | |
+| `session_name` | string | ✅ | |
+| `source_pane_id` | string | ✅ | 要移动的 pane |
+| `target_pane_id` | string | ✅ | 目标 pane（源 pane 将放到它旁边） |
+| `direction` | string | | `horizontal`（上下）或 `vertical`（左右），默认 vertical |
+| `size` | integer | | 新 pane 尺寸（行数/列数），省略则均分 |
+
+### `swap_pane`
+
+交换两个 pane 在窗口布局中的位置。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `host` | string | ✅ | |
+| `session_name` | string | ✅ | |
+| `source_pane_id` | string | ✅ | |
+| `target_pane_id` | string | ✅ | |
+| `detached` | boolean | | 不改变焦点（默认 false） |
 
 ---
 
@@ -458,6 +678,42 @@
 
 ---
 
+## 粘贴板操作
+
+### `list_buffers`
+
+列出所有粘贴板 buffer。
+
+| 参数 | 类型 | 必填 |
+|------|------|:---:|
+| `host` | string | ✅ |
+
+**返回** `{"ok": true, "buffers": [{"name": "buffer0", "size": 1024, "preview": "..."}], "count": 1}`
+
+### `paste_buffer`
+
+将 buffer 内容粘贴到指定 pane。
+
+> ⚠️ 如果 pane 运行着 bash shell，bash 会逐行解释执行粘贴内容。务必先用 `list_buffers` 检查内容后再粘贴。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `host` | string | ✅ | |
+| `session_name` | string | ✅ | |
+| `pane_id` | string | ✅ | |
+| `buffer_name` | string | | buffer 名称（省略则粘贴最近一个） |
+
+### `delete_buffer`
+
+删除指定 buffer。
+
+| 参数 | 类型 | 必填 |
+|------|------|:---:|
+| `host` | string | ✅ |
+| `buffer_name` | string | ✅ |
+
+---
+
 ## 文件传输
 
 ### `file_upload`
@@ -553,7 +809,7 @@ agent-ops-mcp audit cleanup [--db <path>] [--older-than <days>] [--max-size <mb>
 | `host_name` | string | 目标主机 |
 | `session_name` | string | 会话名 |
 | `pane_id` | string | 窗格 ID（非 pane 操作为空） |
-| `action` | string | 操作类型（38 种 AuditAction） |
+| `action` | string | 操作类型（56 种 AuditAction） |
 | `detail` | string | 操作参数 |
 | `output_summary` | string | Exec/CmdEscape 的输出摘要（前 500 字符） |
 | `success` | bool | 操作是否成功 |
@@ -567,14 +823,20 @@ agent-ops-mcp audit cleanup [--db <path>] [--older-than <days>] [--max-size <mb>
 | 场景 | 工具 |
 |------|------|
 | 跑命令看结果 | `exec` |
+| 收集大输出 | `collect_until_exit`（比 exec 更高效） |
 | 交互式程序 | `send_keys` + `capture_pane` |
 | 等命令完成 | `wait_for_text` |
 | 等进程退出 | `wait_exit` |
+| 发现 pane | `find_panes` / `get_pane_by_title` |
+| 发现 session | `find_sessions` |
 | 查看信息 | `pane_info` / `window_info` / `list_window_panes` |
-| 多窗格分屏 | `split_pane` + `exec`（左右各跑不同命令） |
-| 清理 | `close_pane` → `close_window` → `kill_session` |
+| 多窗格分屏 | `split_pane` / `split_pane_with` |
+| 布局调整 | `break_pane` / `join_pane` / `swap_pane` |
+| 粘贴板 | `list_buffers` / `paste_buffer` / `delete_buffer` |
+| 清理 | `close_pane` → `close_window` → `kill_session` / `clear_history` |
 | 特殊按键 | `send_keys`（`\x03`=Ctrl-C, `\n`=Enter） |
-| 搜索 | `find_pane_text` |
+| 搜索 | `find_pane_text` / `find_text_all` / `wait_for_bytes` |
+| 能力检测 | `host_capabilities` / `wait_stable` |
 | 审计查询 | `agent-ops-mcp audit query --host tf01 --action exec --format table` |
 | 审计统计 | `agent-ops-mcp audit stats` |
 | 多机并发执行 | `batch_exec` |

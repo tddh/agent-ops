@@ -25,7 +25,7 @@ graph LR
     C <-->|Unix Socket| D[RMUX daemon<br/>基于 rmux]
 ```
 
-- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 42 个终端控制工具 + 操作审计 CLI
+- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 60 个终端控制工具 + 操作审计 CLI
 - **rmux-bridge** — 部署在每台目标 Linux 主机上的 TLS 加密代理，将 JSON 请求翻译为 RMUX daemon 调用
 - **RMUX daemon** — 每台 Linux 主机上的终端多路复用器（基于 rmux）
 
@@ -138,17 +138,19 @@ agent-ops-mcp audit cleanup --older-than 30
 
 ## 工具列表
 
-共 42 个 MCP 工具，覆盖完整终端生命周期：
+共 60 个 MCP 工具，覆盖完整终端生命周期：
 
 | 类别 | 工具 |
 |------|------|
 | 主机管理 | `host_list`, `host_filter` |
 | 会话管理 | `session_create`, `session_list`, `session_attach`, `session_detach`, `kill_session` |
 | 终端输入 | `send_keys`, `send_text`, `broadcast_keys` |
-| 终端输出 | `capture_pane`, `wait_for_text`, `find_pane_text`, `stream_pane` |
-| 命令执行 | `exec`, `wait_exit`, `spawn_command`, `shell_command`, `respawn_pane`, `cmd_escape` |
-| 窗格操作 | `split_pane`, `resize_pane`, `set_pane_title`, `close_pane`, `pane_info`, `pane_exists` |
+| 终端输出 | `capture_pane`, `capture_region`, `wait_for_text`, `wait_for_bytes`, `find_pane_text`, `find_text_all`, `stream_pane` |
+| 命令执行 | `exec`, `wait_exit`, `wait_stable`, `collect_until_exit`, `spawn_command`, `shell_command`, `respawn_pane`, `cmd_escape` |
+| 窗格操作 | `split_pane`, `split_pane_with`, `break_pane`, `join_pane`, `swap_pane`, `resize_pane`, `set_pane_title`, `get_pane_title`, `clear_history`, `close_pane`, `pane_info`, `pane_exists` |
 | 窗口操作 | `split_window`, `close_window`, `rename_window`, `resize_window`, `select_window`, `select_layout`, `window_info`, `list_window_panes` |
+| 发现与查询 | `find_panes`, `find_sessions`, `get_pane_by_title`, `host_capabilities` |
+| 粘贴板 | `list_buffers`, `paste_buffer`, `delete_buffer` |
 | 文件传输 | `file_upload`, `file_download` |
 | 批量操作 | `batch_exec`, `batch_upload`, `batch_download` |
 | 端口转发 | `tunnel_create`, `tunnel_list`, `tunnel_close` |
@@ -178,7 +180,7 @@ just build       # cargo build --workspace
 
 ## 文档
 
-- [工具文档](docs/TOOLS.md) — 42 个 MCP 工具的完整参数与返回值
+- [工具文档](docs/TOOLS.md) — 60 个 MCP 工具的完整参数与返回值
 - [部署文档](docs/DEPLOY.md) — 架构、构建、部署、运维、安全
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)

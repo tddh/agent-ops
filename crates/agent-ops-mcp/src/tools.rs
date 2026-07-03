@@ -66,6 +66,24 @@ pub async fn execute_tool(ctx: &ToolContext, tool_name: &str, args: Value) -> Re
         "tunnel_create" => tunnel_create(ctx, args).await,
         "tunnel_list" => tunnel_list(ctx).await,
         "tunnel_close" => tunnel_close(ctx, args).await,
+        "find_panes" => find_panes(ctx, args).await,
+        "find_sessions" => find_sessions(ctx, args).await,
+        "get_pane_title" => get_pane_title(ctx, args).await,
+        "find_text_all" => find_text_all(ctx, args).await,
+        "clear_history" => clear_history(ctx, args).await,
+        "list_buffers" => list_buffers(ctx, args).await,
+        "paste_buffer" => paste_buffer(ctx, args).await,
+        "delete_buffer" => delete_buffer(ctx, args).await,
+        "split_pane_with" => split_pane_with(ctx, args).await,
+        "get_pane_by_title" => get_pane_by_title(ctx, args).await,
+        "collect_until_exit" => collect_until_exit(ctx, args).await,
+        "break_pane" => break_pane(ctx, args).await,
+        "join_pane" => join_pane(ctx, args).await,
+        "swap_pane" => swap_pane(ctx, args).await,
+        "host_capabilities" => host_capabilities(ctx, args).await,
+        "capture_region" => capture_region(ctx, args).await,
+        "wait_for_bytes" => wait_for_bytes(ctx, args).await,
+        "wait_stable" => wait_stable(ctx, args).await,
         _ => anyhow::bail!("unknown tool: {}", tool_name),
     }
 }
@@ -225,7 +243,21 @@ async fn capture_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
     let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
 
-    send_json_frame(&mut tls, &json!({ "type": "capture_pane", "session_name": session_name, "pane_id": pane_id, "max_lines": max_lines })).await?;
+    let mut request = json!({
+        "type": "capture_pane",
+        "session_name": session_name,
+        "pane_id": pane_id,
+        "max_lines": max_lines,
+    });
+    if let Some(v) = args.get("ansi") { request["ansi"] = v.clone(); }
+    if let Some(v) = args.get("start_line") { request["start_line"] = v.clone(); }
+    if let Some(v) = args.get("end_line") { request["end_line"] = v.clone(); }
+    if let Some(v) = args.get("join_wrapped") { request["join_wrapped"] = v.clone(); }
+    if let Some(v) = args.get("preserve_spaces") { request["preserve_spaces"] = v.clone(); }
+    if let Some(v) = args.get("alternate") { request["alternate"] = v.clone(); }
+    if let Some(v) = args.get("buffer_name") { request["buffer_name"] = v.clone(); }
+
+    send_json_frame(&mut tls, &request).await?;
     let response = recv_json_frame(&mut tls).await?;
     let num_lines = response["text"].as_str().map(|s| s.lines().count()).unwrap_or(0);
     audit(ctx, AuditAction::CapturePane, host_name, session_name, Some(pane_id), &format!("{} lines", num_lines), None, true, 0, None).await;
@@ -293,7 +325,21 @@ async fn respawn_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
     let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
-    send_json_frame(&mut tls, &json!({ "type": "respawn_pane", "session_name": session_name, "pane_id": pane_id })).await?;
+
+    let mut request = json!({
+        "type": "respawn_pane",
+        "session_name": session_name,
+        "pane_id": pane_id,
+    });
+    if let Some(v) = args.get("command") { request["command"] = v.clone(); }
+    if let Some(v) = args.get("args") { request["args"] = v.clone(); }
+    if let Some(v) = args.get("shell") { request["shell"] = v.clone(); }
+    if let Some(v) = args.get("cwd") { request["cwd"] = v.clone(); }
+    if let Some(v) = args.get("env") { request["env"] = v.clone(); }
+    if let Some(v) = args.get("kill") { request["kill"] = v.clone(); }
+    if let Some(v) = args.get("keep_alive_on_exit") { request["keep_alive_on_exit"] = v.clone(); }
+
+    send_json_frame(&mut tls, &request).await?;
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::RespawnPane, host_name, session_name, Some(pane_id), "", None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
     Ok(response)
@@ -1231,4 +1277,349 @@ async fn tunnel_close(ctx: &ToolContext, args: Value) -> Result<Value> {
         Ok(()) => Ok(json!({ "ok": true, "closed": tunnel_id })),
         Err(e) => Ok(json!({ "ok": false, "error": e.to_string() })),
     }
+}
+
+async fn find_panes(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let host = ctx.router.get(host_name)
+        .with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(
+        &host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure,
+    ).await?;
+
+    let mut request = json!({"type": "find_panes"});
+    if let Some(v) = args.get("session_name") { request["session_name"] = v.clone(); }
+    if let Some(v) = args.get("title") { request["title"] = v.clone(); }
+    if let Some(v) = args.get("title_prefix") { request["title_prefix"] = v.clone(); }
+    if let Some(v) = args.get("command_contains") { request["command_contains"] = v.clone(); }
+    if let Some(v) = args.get("cwd_contains") { request["cwd_contains"] = v.clone(); }
+    if let Some(v) = args.get("window_index") { request["window_index"] = v.clone(); }
+    if let Some(v) = args.get("running") { request["running"] = v.clone(); }
+    if let Some(v) = args.get("exited") { request["exited"] = v.clone(); }
+
+    send_json_frame(&mut tls, &request).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::FindPanes, host_name, "", None, "", None,
+        response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn find_sessions(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let host = ctx.router.get(host_name)
+        .with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(
+        &host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure,
+    ).await?;
+
+    let mut request = json!({"type": "find_sessions"});
+    if let Some(v) = args.get("name") { request["name"] = v.clone(); }
+
+    send_json_frame(&mut tls, &request).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::FindSessions, host_name, "", None, "", None,
+        response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn get_pane_title(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
+    let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
+    let host = ctx.router.get(host_name)
+        .with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(
+        &host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure,
+    ).await?;
+
+    send_json_frame(&mut tls, &json!({
+        "type": "get_pane_title",
+        "session_name": session_name,
+        "pane_id": pane_id,
+    })).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::GetPaneTitle, host_name, session_name, Some(pane_id),
+        "", None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn find_text_all(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
+    let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
+    let pattern = args["pattern"].as_str().context("missing 'pattern'")?;
+    let host = ctx.router.get(host_name)
+        .with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(
+        &host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure,
+    ).await?;
+
+    send_json_frame(&mut tls, &json!({
+        "type": "find_text_all",
+        "session_name": session_name,
+        "pane_id": pane_id,
+        "pattern": pattern,
+    })).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::FindTextAll, host_name, session_name, Some(pane_id),
+        pattern, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn clear_history(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
+    let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
+    let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
+    send_json_frame(&mut tls, &json!({ "type": "clear_history", "session_name": session_name, "pane_id": pane_id })).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::ClearHistory, host_name, session_name, Some(pane_id), "", None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn list_buffers(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
+    send_json_frame(&mut tls, &json!({ "type": "list_buffers" })).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::ListBuffers, host_name, "", None, "", None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn paste_buffer(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
+    let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
+    let buffer_name = args["buffer_name"].as_str().unwrap_or("");
+    let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
+    send_json_frame(&mut tls, &json!({ "type": "paste_buffer", "session_name": session_name, "pane_id": pane_id, "buffer_name": buffer_name })).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::PasteBuffer, host_name, session_name, Some(pane_id), buffer_name, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn delete_buffer(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let buffer_name = args["buffer_name"].as_str().context("missing 'buffer_name'")?;
+    let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
+    send_json_frame(&mut tls, &json!({ "type": "delete_buffer", "buffer_name": buffer_name })).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::DeleteBuffer, host_name, "", None, buffer_name, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn split_pane_with(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
+    let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
+    let direction = args["direction"].as_str().context("missing 'direction'")?;
+    let command = args["command"].as_str().context("missing 'command'")?;
+    let cmd_args = args["args"].as_array().cloned().unwrap_or_default();
+    let shell = args["shell"].as_bool().unwrap_or(true);
+    let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
+
+    let mut request = json!({
+        "type": "split_pane_with",
+        "session_name": session_name,
+        "pane_id": pane_id,
+        "direction": direction,
+        "command": command,
+        "args": cmd_args,
+        "shell": shell,
+    });
+    if let Some(v) = args.get("cwd") { request["cwd"] = v.clone(); }
+    if let Some(v) = args.get("env") { request["env"] = v.clone(); }
+    if let Some(v) = args.get("title") { request["title"] = v.clone(); }
+    if let Some(v) = args.get("keep_alive_on_exit") { request["keep_alive_on_exit"] = v.clone(); }
+
+    send_json_frame(&mut tls, &request).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::SplitPaneWith, host_name, session_name, Some(pane_id), command, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn get_pane_by_title(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let title = args["title"].as_str().context("missing 'title'")?;
+    let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
+    send_json_frame(&mut tls, &json!({ "type": "get_pane_by_title", "title": title })).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::GetPaneByTitle, host_name, "", None, title, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn collect_until_exit(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
+    let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
+    let max_bytes = args["max_bytes"].as_u64().unwrap_or(1048576);
+    let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(60000);
+    let starting_at = args["starting_at"].as_str().unwrap_or("now");
+    let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
+    send_json_frame(&mut tls, &json!({
+        "type": "collect_until_exit",
+        "session_name": session_name,
+        "pane_id": pane_id,
+        "max_bytes": max_bytes,
+        "timeout_ms": timeout_ms,
+        "starting_at": starting_at,
+    })).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::CollectUntilExit, host_name, session_name, Some(pane_id), "", None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn break_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
+    let pane_id = args["pane_id"].as_str().unwrap_or("");
+    let destination_window = args["destination_window"].as_u64();
+    let detached = args["detached"].as_bool().unwrap_or(false);
+    let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
+    let mut req = json!({
+        "type": "break_pane",
+        "session_name": session_name,
+        "pane_id": pane_id,
+        "detached": detached,
+    });
+    if let Some(dw) = destination_window { req["destination_window"] = json!(dw); }
+    send_json_frame(&mut tls, &req).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::BreakPane, host_name, session_name, None, pane_id, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn join_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
+    let source_pane_id = args["source_pane_id"].as_str().context("missing 'source_pane_id'")?;
+    let target_pane_id = args["target_pane_id"].as_str().context("missing 'target_pane_id'")?;
+    let direction = args["direction"].as_str();
+    let size = args["size"].as_u64();
+    let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
+    let mut req = json!({
+        "type": "join_pane",
+        "session_name": session_name,
+        "source_pane_id": source_pane_id,
+        "target_pane_id": target_pane_id,
+    });
+    if let Some(d) = direction { req["direction"] = json!(d); }
+    if let Some(s) = size { req["size"] = json!(s); }
+    send_json_frame(&mut tls, &req).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    let detail = format!("{} -> {}", source_pane_id, target_pane_id);
+    audit(ctx, AuditAction::JoinPane, host_name, session_name, None, &detail, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn swap_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
+    let source_pane_id = args["source_pane_id"].as_str().context("missing 'source_pane_id'")?;
+    let target_pane_id = args["target_pane_id"].as_str().context("missing 'target_pane_id'")?;
+    let detached = args["detached"].as_bool().unwrap_or(false);
+    let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
+    send_json_frame(&mut tls, &json!({
+        "type": "swap_pane",
+        "session_name": session_name,
+        "source_pane_id": source_pane_id,
+        "target_pane_id": target_pane_id,
+        "detached": detached,
+    })).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    let detail = format!("{} <-> {}", source_pane_id, target_pane_id);
+    audit(ctx, AuditAction::SwapPane, host_name, session_name, None, &detail, None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn host_capabilities(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let check = args["check"].as_str();
+    let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
+    let mut req = json!({ "type": "capabilities" });
+    if let Some(c) = check { req["check"] = json!(c); }
+    send_json_frame(&mut tls, &req).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::HostCapabilities, host_name, "", None, "", None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn capture_region(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
+    let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
+    let styled = args["styled"].as_bool().unwrap_or(false);
+    let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
+
+    let mut request = json!({
+        "type": "capture_region",
+        "session_name": session_name,
+        "pane_id": pane_id,
+        "styled": styled,
+    });
+    if let Some(v) = args.get("row") { request["row"] = v.clone(); }
+    if let Some(v) = args.get("col") { request["col"] = v.clone(); }
+    if let Some(v) = args.get("rows") { request["rows"] = v.clone(); }
+    if let Some(v) = args.get("cols") { request["cols"] = v.clone(); }
+
+    send_json_frame(&mut tls, &request).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::CaptureRegion, host_name, session_name, Some(pane_id), "", None, response["ok"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn wait_for_bytes(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
+    let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
+    let bytes_b64 = args["bytes"].as_str().context("missing 'bytes'")?;
+    let only_new = args["only_new"].as_bool().unwrap_or(false);
+    let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(30000);
+    let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
+
+    send_json_frame(&mut tls, &json!({
+        "type": "wait_for_bytes",
+        "session_name": session_name,
+        "pane_id": pane_id,
+        "bytes": bytes_b64,
+        "only_new": only_new,
+        "timeout_ms": timeout_ms,
+    })).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::WaitForBytes, host_name, session_name, Some(pane_id), bytes_b64, None, response["found"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
+}
+
+async fn wait_stable(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let host_name = args["host"].as_str().context("missing 'host'")?;
+    let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
+    let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
+    let stable_ms = args["stable_ms"].as_u64().unwrap_or(500);
+    let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(30000);
+    let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
+    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
+
+    send_json_frame(&mut tls, &json!({
+        "type": "wait_stable",
+        "session_name": session_name,
+        "pane_id": pane_id,
+        "stable_ms": stable_ms,
+        "timeout_ms": timeout_ms,
+    })).await?;
+    let response = recv_json_frame(&mut tls).await?;
+    audit(ctx, AuditAction::WaitStable, host_name, session_name, Some(pane_id), "", None, response["stable"].as_bool().unwrap_or(false), 0, None).await;
+    Ok(response)
 }

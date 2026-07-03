@@ -181,14 +181,21 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "capture_pane",
-                "description": "Capture pane text (default last 200 lines, max_lines=0 for full scrollback)",
+                "description": "Capture pane text (default last 200 lines, max_lines=0 for full scrollback). Advanced capture with ansi, start_line, end_line, join_wrapped, preserve_spaces, alternate, buffer_name for fine-grained control.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string", "description": "Hostname, e.g. tf01" },
                         "session_name": { "type": "string", "description": "Session name, e.g. agent-ops" },
                         "pane_id": { "type": "string", "description": "Pane ID, e.g. %0" },
-                        "max_lines": { "type": "integer", "description": "Default 200, 0=unlimited" }
+                        "max_lines": { "type": "integer", "description": "Default 200, 0=unlimited" },
+                        "ansi": { "type": "boolean", "description": "Preserve ANSI escape codes (default: false). When true, text is base64-encoded." },
+                        "start_line": { "type": "integer", "description": "Starting line (negative = from end). Overrides max_lines when set." },
+                        "end_line": { "type": "integer", "description": "Ending line (negative = from end)" },
+                        "join_wrapped": { "type": "boolean", "description": "Join terminal-wrapped lines into single lines (default: false)" },
+                        "preserve_spaces": { "type": "boolean", "description": "Preserve trailing spaces (default: false)" },
+                        "alternate": { "type": "boolean", "description": "Capture alternate screen (e.g. vim/less). Default: false." },
+                        "buffer_name": { "type": "string", "description": "Write capture to a named buffer instead of returning text. Mutually exclusive with other text-return params." }
                     },
                     "required": ["host", "session_name", "pane_id"]
                 }
@@ -239,13 +246,20 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "respawn_pane",
-                "description": "Respawn a pane process (restart default shell). Use when process has exited or shell needs reset.",
+                "description": "Respawn a pane process (restart default shell, or launch a custom command). Use when process has exited or shell needs reset. Supports optional command, working directory, environment variables, kill, and keep_alive on exit.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": { "type": "string" },
                         "session_name": { "type": "string" },
-                        "pane_id": { "type": "string" }
+                        "pane_id": { "type": "string" },
+                        "command": { "type": "string", "description": "Replace default shell with this command" },
+                        "args": { "type": "array", "items": { "type": "string" }, "description": "Command arguments (used when shell=false)" },
+                        "shell": { "type": "boolean", "description": "Run command via /bin/sh -c (default: false, spawn mode)" },
+                        "cwd": { "type": "string", "description": "Working directory" },
+                        "env": { "type": "object", "description": "Environment variables as KEY:VALUE pairs" },
+                        "kill": { "type": "boolean", "description": "Force kill running process before respawn (default: false)" },
+                        "keep_alive_on_exit": { "type": "boolean", "description": "Keep pane open after process exits (default: false)" }
                     },
                     "required": ["host", "session_name", "pane_id"]
                 }
@@ -656,6 +670,270 @@ async fn main() -> anyhow::Result<()> {
                         "tunnel_id": { "type": "string", "description": "Tunnel ID returned by tunnel_create" }
                     },
                     "required": ["tunnel_id"]
+                }
+            },
+            {
+                "name": "find_panes",
+                "description": "Discover panes across sessions by title, command, working directory, or process state. Returns matching panes with metadata.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "session_name": { "type": "string", "description": "Filter by session name" },
+                        "title": { "type": "string", "description": "Filter by exact pane title" },
+                        "title_prefix": { "type": "string", "description": "Filter by pane title prefix" },
+                        "command_contains": { "type": "string", "description": "Filter panes whose command contains this substring" },
+                        "cwd_contains": { "type": "string", "description": "Filter panes whose working directory contains this substring" },
+                        "window_index": { "type": "integer", "description": "Filter by window index" },
+                        "running": { "type": "boolean", "description": "Only show panes with running processes" },
+                        "exited": { "type": "boolean", "description": "Only show panes with exited processes" }
+                    },
+                    "required": ["host"]
+                }
+            },
+            {
+                "name": "find_sessions",
+                "description": "Discover sessions by exact name filter. Unlike session_list (which only returns names), find_sessions returns live handles suitable for further operations like querying panes and windows.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "name": { "type": "string", "description": "Exact session name to filter by (optional)" }
+                    },
+                    "required": ["host"]
+                }
+            },
+            {
+                "name": "get_pane_title",
+                "description": "Get the title of a specific pane. Returns the pane title as set by the terminal application.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "session_name": { "type": "string", "description": "Session name, e.g. agent-ops" },
+                        "pane_id": { "type": "string", "description": "Pane ID, e.g. %0" }
+                    },
+                    "required": ["host", "session_name", "pane_id"]
+                }
+            },
+            {
+                "name": "find_text_all",
+                "description": "Search pane visible text for ALL occurrences of a pattern (including overlapping matches on the same line). Returns all matches with positions.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "session_name": { "type": "string", "description": "Session name, e.g. agent-ops" },
+                        "pane_id": { "type": "string", "description": "Pane ID, e.g. %0" },
+                        "pattern": { "type": "string", "description": "Text pattern to search for" }
+                    },
+                    "required": ["host", "session_name", "pane_id", "pattern"]
+                }
+            },
+            {
+                "name": "clear_history",
+                "description": "Clear pane scrollback history. Unlike exec's clear_screen (which only clears the visible area), this removes all retained output.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "session_name": { "type": "string", "description": "Session name, e.g. agent-ops" },
+                        "pane_id": { "type": "string", "description": "Pane ID, e.g. %0" }
+                    },
+                    "required": ["host", "session_name", "pane_id"]
+                }
+            },
+            {
+                "name": "list_buffers",
+                "description": "List all paste buffers. Returns buffer name, size in bytes, and content preview for each.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" }
+                    },
+                    "required": ["host"]
+                }
+            },
+            {
+                "name": "paste_buffer",
+                "description": "Paste a named buffer into a pane. If buffer_name is omitted, pastes the most recent buffer.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "session_name": { "type": "string", "description": "Session name, e.g. agent-ops" },
+                        "pane_id": { "type": "string", "description": "Pane ID, e.g. %0" },
+                        "buffer_name": { "type": "string", "description": "Buffer name to paste (optional, pastes top buffer if omitted)" }
+                    },
+                    "required": ["host", "session_name", "pane_id"]
+                }
+            },
+            {
+                "name": "delete_buffer",
+                "description": "Delete a named paste buffer.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "buffer_name": { "type": "string", "description": "Buffer name to delete" }
+                    },
+                    "required": ["host", "buffer_name"]
+                }
+            },
+            {
+                "name": "split_pane_with",
+                "description": "Split a pane and run a command in the new pane simultaneously. Use shell flag to control how the command is executed. Supports working directory, environment variables, pane title, and keep-alive on exit.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "session_name": { "type": "string", "description": "Session name" },
+                        "pane_id": { "type": "string", "description": "Source pane ID to split" },
+                        "direction": { "type": "string", "description": "horizontal or vertical" },
+                        "command": { "type": "string", "description": "Command to run in the new pane" },
+                        "args": { "type": "array", "items": { "type": "string" }, "description": "Command arguments (for shell=false)" },
+                        "shell": { "type": "boolean", "description": "Run via /bin/sh -c (default: true)" },
+                        "cwd": { "type": "string", "description": "Working directory for the new pane" },
+                        "env": { "type": "object", "description": "Environment variables as KEY:VALUE pairs" },
+                        "title": { "type": "string", "description": "Title for the new pane" },
+                        "keep_alive_on_exit": { "type": "boolean", "description": "Keep pane open after process exits (default: false)" }
+                    },
+                    "required": ["host", "session_name", "pane_id", "direction", "command"]
+                }
+            },
+            {
+                "name": "get_pane_by_title",
+                "description": "Find a single pane by exact title. Returns error if zero or multiple panes match. Returns pane metadata.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "title": { "type": "string", "description": "Exact pane title to search for" }
+                    },
+                    "required": ["host", "title"]
+                }
+            },
+            {
+                "name": "collect_until_exit",
+                "description": "Collect all pane output from now until the process exits. The pane process MUST already be running — use spawn_command or exec to start it first. More efficient than sentinel polling for commands with large output. Returns collected bytes and exit info.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "session_name": { "type": "string", "description": "Session name" },
+                        "pane_id": { "type": "string", "description": "Pane ID" },
+                        "max_bytes": { "type": "integer", "description": "Max bytes to collect (default: 1048576 = 1MB)" },
+                        "timeout_ms": { "type": "number", "description": "Timeout in ms (default: 60000)" },
+                        "starting_at": { "type": "string", "description": "now or oldest (default: now)" }
+                    },
+                    "required": ["host", "session_name", "pane_id"]
+                }
+            },
+            {
+                "name": "break_pane",
+                "description": "Break a pane out of its current window into a new window (or a specified destination window).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname" },
+                        "session_name": { "type": "string", "description": "Session name" },
+                        "pane_id": { "type": "string", "description": "Pane ID to break (optional, breaks current pane if omitted)" },
+                        "destination_window": { "type": "integer", "description": "Target window index (optional, creates new window if omitted)" },
+                        "detached": { "type": "boolean", "description": "Detach the pane (default: false)" }
+                    },
+                    "required": ["host", "session_name"]
+                }
+            },
+            {
+                "name": "join_pane",
+                "description": "Join (move) a pane from one window into another, optionally with direction and size.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname" },
+                        "session_name": { "type": "string", "description": "Session name" },
+                        "source_pane_id": { "type": "string", "description": "Source pane ID to move" },
+                        "target_pane_id": { "type": "string", "description": "Target pane ID to join with" },
+                        "direction": { "type": "string", "description": "horizontal or vertical (optional)" },
+                        "size": { "type": "integer", "description": "Pane size in cells (optional)" }
+                    },
+                    "required": ["host", "session_name", "source_pane_id", "target_pane_id"]
+                }
+            },
+            {
+                "name": "swap_pane",
+                "description": "Swap two panes within a session.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname" },
+                        "session_name": { "type": "string", "description": "Session name" },
+                        "source_pane_id": { "type": "string", "description": "First pane to swap" },
+                        "target_pane_id": { "type": "string", "description": "Second pane to swap" },
+                        "detached": { "type": "boolean", "description": "Detach source pane (default: false)" }
+                    },
+                    "required": ["host", "session_name", "source_pane_id", "target_pane_id"]
+                }
+            },
+            {
+                "name": "host_capabilities",
+                "description": "Query which features the host rmux daemon supports (e.g. 'web.share', 'sdk.waits', 'stream.control'). Use before attempting advanced operations to verify compatibility. Optionally check for a specific capability.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "check": { "type": "string", "description": "Specific capability to check for (optional)" }
+                    },
+                    "required": ["host"]
+                }
+            },
+            {
+                "name": "capture_region",
+                "description": "Capture a rectangular region of a pane, or capture the full pane screenshot when no coordinates are specified. Supports plain text or styled (color markup) output.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string" },
+                        "session_name": { "type": "string" },
+                        "pane_id": { "type": "string" },
+                        "row": { "type": "integer", "description": "Top row (0-based). Omit all coords for full screenshot." },
+                        "col": { "type": "integer", "description": "Left column (0-based)" },
+                        "rows": { "type": "integer", "description": "Height in rows" },
+                        "cols": { "type": "integer", "description": "Width in columns" },
+                        "styled": { "type": "boolean", "description": "Preserve style/color markup (default: false, plain text)" }
+                    },
+                    "required": ["host", "session_name", "pane_id"]
+                }
+            },
+            {
+                "name": "wait_for_bytes",
+                "description": "Wait for specific raw bytes to appear in the pane output stream. Unlike wait_for_text (which only matches visible text), this matches the raw output including ANSI sequences and control characters.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string" },
+                        "session_name": { "type": "string" },
+                        "pane_id": { "type": "string" },
+                        "bytes": { "type": "string", "description": "Raw bytes to wait for (as base64-encoded string)" },
+                        "only_new": { "type": "boolean", "description": "Only match data appearing after this call (skip history, default: false)" },
+                        "timeout_ms": { "type": "number", "description": "Default 30000" }
+                    },
+                    "required": ["host", "session_name", "pane_id", "bytes"]
+                }
+            },
+            {
+                "name": "wait_stable",
+                "description": "Wait until the pane output has been stable (no changes) for a given duration. Useful after sending commands to ensure terminal rendering is complete before capturing output.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string" },
+                        "session_name": { "type": "string" },
+                        "pane_id": { "type": "string" },
+                        "stable_ms": { "type": "number", "description": "Duration of stability required in ms (default: 500)" },
+                        "timeout_ms": { "type": "number", "description": "Max total wait time in ms (default: 30000)" }
+                    },
+                    "required": ["host", "session_name", "pane_id"]
                 }
             }
         ]

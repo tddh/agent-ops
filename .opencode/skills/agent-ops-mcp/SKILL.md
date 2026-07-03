@@ -55,7 +55,38 @@ session_attach(host, session_name="agent-ops")
 
 **不需要确认的场景：**
 - ✅ 用户明确说了主机名、会话名、命令等完整信息
-- ✅ 上下文中已经明确（如刚才还在操作 tf01，用户说"再跑一次"）
+- ✅ 上下文中已经明确
+
+## 🔴 安全规则
+
+### paste_buffer 是危险操作
+
+`paste_buffer` 将粘贴板内容原样注入到目标 pane。**如果 pane 运行着 bash shell，bash 会逐行解释执行粘贴的每一行内容。** 这不是 bug——这是终端模拟粘贴的标准行为——但后果可能是灾难性的：
+
+```
+# buffer 内容（看起来无害）：
+=== PING ===
+PING www.a.shifen.com (110.242.69.21) 56(84) bytes of data.
+HTTP/1.1 200 OK
+
+# bash 逐行执行：
+===: command not found          # → 报错，无害
+-bash: syntax error ... '('     # → 报错，无害  
+HTTP/1.1: No such file ...      # → 报错，无害
+
+# 但如果 buffer 里是：
+rm -rf /tmp/*
+systemctl stop nginx
+DROP TABLE users;
+# → 真的会执行！
+```
+
+**强制规则：**
+
+| 规则 | 说明 |
+|------|------|
+| **先查后贴** | 用 `list_buffers` 查看 buffer 内容（`preview` 字段）后再决定是否粘贴 |
+| **禁止盲贴** | 绝不把未知/未检查的 buffer 内容粘贴到生产 shell |
 
 ## 工具使用示例
 

@@ -1156,6 +1156,7 @@ version = "0.1.0"
 dependencies = [
  "agent-ops-core",
  "anyhow",
+ "base64",
  "clap",
  "futures",
  "jsonwebtoken",
