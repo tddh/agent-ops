@@ -13,3 +13,16 @@ license = "MIT"
 
 [workspace.dependencies]
 agent-ops-core = { path = "crates/agent-ops-core" }
+tokio = { version = "1", features = ["full"] }
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+anyhow = "1"
+regex = "1"
+futures = "0.3"
+quinn = "0.11"
+clap = "4"

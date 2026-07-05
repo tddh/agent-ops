@@ -1,71 +1,18 @@
-//! Authentication layer for incoming bridge connections. Supports both
-//! static token (constant-time comparison) and JWT (HS256) verification.
+//! Authentication layer for incoming bridge connections.
+//! Uses constant-time comparison of a pre-shared static token.
 
 use anyhow::{bail, Result};
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
-use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const AUTH_PREAMBLE: &[u8; 4] = b"AUTH";
 
-#[derive(Debug, Deserialize)]
-struct JwtClaims {
-    #[allow(dead_code)]
-    exp: Option<usize>,
-}
-
-enum TokenMode {
-    Static(String),
-    Jwt { secret: String },
-}
-
-impl TokenMode {
-    fn from_config(token: &str) -> Self {
-        if let Some(jwt_secret) = token.strip_prefix("jwt:") {
-            TokenMode::Jwt {
-                secret: jwt_secret.to_string(),
-            }
-        } else {
-            TokenMode::Static(token.to_string())
-        }
-    }
-
-    fn verify(&self, received: &str) -> bool {
-        match self {
-            TokenMode::Static(expected) => {
-                constant_time_eq(received.as_bytes(), expected.as_bytes())
-            }
-            TokenMode::Jwt { secret } => verify_jwt(received, secret),
-        }
-    }
-}
-
-fn verify_jwt(token: &str, secret: &str) -> bool {
-    let mut validation = Validation::new(Algorithm::HS256);
-    validation.validate_exp = true;
-
-    match decode::<JwtClaims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &validation,
-    ) {
-        Ok(_data) => true,
-        Err(e) => {
-            tracing::warn!("JWT verification failed: {}", e);
-            false
-        }
-    }
-}
-
-/// Reads the `AUTH` preamble + length-prefixed token from the stream,
-/// verifies it against `expected_token` (static or `jwt:` prefixed),
-/// and sends `OK\n` or `ERR ...\n`.
+/// Reads the AUTH preamble + length-prefixed token from the stream,
+/// verifies it against expected_token using constant-time comparison,
+/// and sends OK\n or ERR ...\n.
 pub async fn authenticate(
     stream: &mut (impl AsyncReadExt + AsyncWriteExt + Unpin),
     expected_token: &str,
 ) -> Result<()> {
-    let token_mode = TokenMode::from_config(expected_token);
-
     let mut preamble = [0u8; 4];
     stream.read_exact(&mut preamble).await?;
 
@@ -87,36 +34,22 @@ pub async fn authenticate(
     stream.read_exact(&mut token_buf).await?;
     let received_token = std::str::from_utf8(&token_buf)?;
 
-    if !token_mode.verify(received_token) {
+    if !constant_time_eq(received_token.as_bytes(), expected_token.as_bytes()) {
         stream.write_all(b"ERR auth failed\n").await?;
         bail!("authentication failed");
     }
 
     stream.write_all(b"OK\n").await?;
-
     tracing::info!("client authenticated successfully");
     Ok(())
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut result = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        result |= x ^ y;
-    }
-    result == 0
-}
-
-/// QUIC version: authenticate via bidi stream (send+recv as separate handles).
+/// QUIC version: authenticate via bidi stream.
 pub async fn authenticate_quic(
     send: &mut quinn::SendStream,
     recv: &mut quinn::RecvStream,
     expected_token: &str,
 ) -> anyhow::Result<()> {
-    let token_mode = TokenMode::from_config(expected_token);
-
     let mut preamble = [0u8; 4];
     recv.read_exact(&mut preamble).await?;
     if &preamble != b"AUTH" {
@@ -136,7 +69,7 @@ pub async fn authenticate_quic(
     recv.read_exact(&mut token_buf).await?;
     let received_token = std::str::from_utf8(&token_buf)?;
 
-    if !token_mode.verify(received_token) {
+    if !constant_time_eq(received_token.as_bytes(), expected_token.as_bytes()) {
         send.write_all(b"ERR auth failed\n").await?;
         anyhow::bail!("authentication failed");
     }
@@ -144,6 +77,17 @@ pub async fn authenticate_quic(
     send.write_all(b"OK\n").await?;
     tracing::info!("QUIC client authenticated successfully");
     Ok(())
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut result = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
 }
 
 #[cfg(test)]

@@ -21,7 +21,7 @@ agent-ops consists of two components connected over TLS:
 
 Security assumptions:
 - The TLS channel between MCP server and bridge is encrypted and authenticated
-- Bridge authentication uses static tokens (constant-time comparison) or JWT (HS256)
+- Bridge authentication uses static tokens with constant-time comparison
 - Certificates can be self-signed or CA-issued
 - By default, connections without CA verification are rejected
 

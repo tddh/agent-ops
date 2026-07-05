@@ -9,21 +9,20 @@ path = "src/main.rs"
 
 [dependencies]
 agent-ops-core.workspace = true
-tokio = { version = "1", features = ["full"] }
-tokio-rustls = "0.26"
-rustls = "0.23"
-rustls-pemfile = "2"
-clap = { version = "4", features = ["derive", "env"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-anyhow = "1"
-jsonwebtoken = "9"
+tokio.workspace = true
+tokio-rustls.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+anyhow.workspace = true
 rmux-sdk = "0.7"
-regex = "1"
+regex.workspace = true
 sha2 = "0.10"
-futures = "0.3"
-quinn = "0.11"
+futures.workspace = true
+quinn.workspace = true
 tokio-yamux = "0.3"
 base64 = "0.22"

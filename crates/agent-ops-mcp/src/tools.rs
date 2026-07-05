@@ -121,9 +121,8 @@ async fn host_filter(ctx: &ToolContext, args: Value) -> Result<Value> {
         }
     }
     if let Some(pattern) = args["pattern"].as_str() {
-        let glob = pattern.replace('*', ".*").replace('?', ".");
-        if let Ok(re) = regex::Regex::new(&format!("^{}$", glob)) {
-            hosts.retain(|h| re.is_match(&h.name));
+        if let Ok(pat) = glob::Pattern::new(pattern) {
+            hosts.retain(|h| pat.matches(&h.name));
         }
     }
 

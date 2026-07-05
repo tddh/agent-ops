@@ -12,7 +12,7 @@
 └─────────────────┘            └──────────────┘ ════════════════════════╝ └──────────────────┘                └─────────┘
 ```
 
-- **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 42 个终端控制工具 + 操作审计 CLI
+- **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 60 个终端控制工具 + 操作审计 CLI
 - **rmux-bridge**: 部署在每台目标 Linux 主机上，TLS 加密代理 → RMUX daemon。终端操作与文件传输统一走 QUIC/TCP 双协议，共享 9778 端口（QUIC 优先，UDP 不可用时自动降级 TCP/TLS）
 - **RMUX daemon**: 每个 Linux 主机上的终端多路复用器
 
@@ -156,14 +156,17 @@ ssh root@<your-bridge-ip> "systemctl status rmux-bridge --no-pager"
 
 ### 6. 认证模式
 
-Bridge 支持两种 token 格式：
+Bridge 使用静态 token 认证，通过常数时间比较（防时序攻击）。
 
-| 格式 | 示例 | 说明 |
-|------|------|------|
-| 静态 token | `<your-token>` | 常数时间比较，防时序攻击 |
-| JWT (HS256) | `jwt:eyJhbG...` | 前缀 `jwt:` 触发 JWT 验证，支持过期时间 (`exp`) |
+```yaml
+# config/hosts.yaml
+hosts:
+  - name: tf01
+    bridge_addr: 10.0.1.10:9778
+    bridge_token: "your-secure-token"
+```
 
-在 `config/hosts.yaml` 的 `bridge_token` 和系统环境变量 `BRIDGE_AUTH_TOKEN` 中统一使用同一种格式。
+`bridge_token` 和系统环境变量 `BRIDGE_AUTH_TOKEN` 中的 token 必须一致。
 
 ### 7. 配置主机注册表
 

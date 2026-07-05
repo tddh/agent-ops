@@ -11,6 +11,13 @@
   - 64KB 缓冲区，支持 TCP 半关闭处理
   - 完整审计日志记录
 
+### Changed
+- 移除 JWT 认证支持，认证简化为纯静态 token 常量时间比较
+- 工作空间依赖统一到根 Cargo.toml，13 个共享依赖版本集中管理
+
+### Security
+- host_filter 通配符过滤从手写正则改为 `glob::Pattern`，消除 ReDoS 风险
+
 ## [0.1.0] — 2026-07-02
 
 ### Added
@@ -20,7 +27,7 @@
 - CA 签发 + 按主机独立证书的多主机 PKI 体系
 - Windows/macOS/Linux 客户端原生支持
 - Bridge 并发连接限制（`--max-connections`，默认 256）
-- Token 认证 + JWT 支持，恒定时间比较
+- Token 认证，恒定时间比较
 - SQLite 审计日志（query/stats/cleanup）
 - 主机注册表（group/tag/label 过滤、broadcast_keys）
 - 文件传输：QUIC 上传/下载、目录递归并发上传
