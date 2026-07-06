@@ -8,7 +8,8 @@ use uuid::Uuid;
 use crate::audit;
 use crate::router::HostRouter;
 use crate::files::OverwriteMode;
-use crate::transport::connect_to_bridge_hybrid;
+use crate::stream::StreamManager;
+use crate::transport::{connect_to_bridge_hybrid, send_json_frame, recv_json_frame};
 use crate::transport::BridgeStream;
 use crate::tunnel::TunnelManager;
 
@@ -19,6 +20,7 @@ pub struct ToolContext {
     pub audit_db: Arc<audit::AuditDb>,
     pub agent_name: std::sync::Mutex<String>,
     pub tunnel_manager: Arc<TunnelManager>,
+    pub stream_manager: Arc<StreamManager>,
 }
 
 pub async fn execute_tool(ctx: &ToolContext, tool_name: &str, args: Value) -> Result<Value> {
@@ -390,12 +392,17 @@ async fn stream_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
+    let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(10000);
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
-    let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
-    send_json_frame(&mut tls, &json!({ "type": "stream_subscribe", "session_name": session_name, "pane_id": pane_id })).await?;
-    let response = recv_json_frame(&mut tls).await?;
+
+    let start = std::time::Instant::now();
+    let response = ctx.stream_manager.stream_pane(host, session_name, pane_id, timeout_ms, ctx.ca_cert_path.as_deref(), ctx.insecure).await?;
+    let elapsed = start.elapsed().as_millis() as u64;
+
+    let has_data = response["text"].as_str().map(|s| !s.is_empty()).unwrap_or(false);
     audit(ctx, AuditAction::StreamSubscribe, host_name, session_name, Some(pane_id),
-        "", None, response["ok"].as_bool().unwrap_or(true), 0, None).await;
+        "", None, has_data, elapsed, None).await;
+
     Ok(response)
 }
 
@@ -479,27 +486,6 @@ async fn file_download(ctx: &ToolContext, args: Value) -> Result<Value> {
         }
         Err(e) => Ok(json!({ "ok": false, "error": e.to_string() })),
     }
-}
-
-async fn send_json_frame<S: tokio::io::AsyncWriteExt + Unpin>(stream: &mut S, value: &Value) -> Result<()> {
-    let json_str = serde_json::to_string(value)?;
-    let len = json_str.len() as u32;
-    stream.write_all(&len.to_le_bytes()).await?;
-    stream.write_all(json_str.as_bytes()).await?;
-    stream.flush().await?;
-    Ok(())
-}
-
-async fn recv_json_frame<S: tokio::io::AsyncReadExt + Unpin>(stream: &mut S) -> Result<Value> {
-    let mut len_buf = [0u8; 4];
-    stream.read_exact(&mut len_buf).await?;
-    let len = u32::from_le_bytes(len_buf) as usize;
-    if len > agent_ops_core::MAX_FRAME_SIZE {
-        anyhow::bail!("frame too large: {} bytes (max {})", len, agent_ops_core::MAX_FRAME_SIZE);
-    }
-    let mut buf = vec![0u8; len];
-    stream.read_exact(&mut buf).await?;
-    Ok(serde_json::from_slice(&buf)?)
 }
 
 /// 单次命令执行的结果，用于 batch 聚合和单机 exec 复用
@@ -1691,7 +1677,7 @@ async fn deploy_bridge(ctx: &ToolContext, args: Value) -> Result<Value> {
             };
 
             let exec_result = exec_in_session(&mut stream, session_name, &pane_id,
-                "systemctl show rmux-bridge -p ExecStart --value 2>/dev/null | cut -d' ' -f1",
+                "systemctl show rmux-bridge -p ExecStart 2>/dev/null | grep -oP 'path=\\K[^ ;]+' || echo ''",
                 10000, 50).await;
 
             let systemd_path = exec_result.output.trim().to_string();

@@ -93,16 +93,20 @@ where
         }
 
         if req_type == "stream_subscribe" {
+            tracing::info!("stream_subscribe: received request");
             let sn = request["session_name"].as_str().unwrap_or("");
             let pane_id = request["pane_id"].as_str().unwrap_or("");
+            tracing::info!("stream_subscribe: session_name={}, pane_id={}", sn, pane_id);
             match protocol_proxy.subscribe_pane_output(sn, pane_id).await {
                 Ok(mut out_stream) => {
+                    tracing::info!("stream_subscribe: subscribe_pane_output succeeded");
                     let resp = json!({
                         "ok": true,
                         "stream_subscribed": true,
                         "pane_id": pane_id,
                     });
                     send_response(&writer, &resp).await?;
+                    tracing::info!("stream_subscribe: sent ack response");
 
                     let writer_clone = writer.clone();
                     let pid = pane_id.to_string();
@@ -149,6 +153,7 @@ where
                     send_response(&writer, &err_resp).await?;
                 }
             }
+            handled = true;
             continue;
         }
 

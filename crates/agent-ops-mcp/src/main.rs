@@ -2,6 +2,7 @@
 mod audit;
 mod files;
 mod router;
+mod stream;
 mod tools;
 mod transport;
 mod tunnel;
@@ -92,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
         audit_db,
         agent_name: std::sync::Mutex::new("unknown".to_string()),
         tunnel_manager: Arc::new(tunnel::TunnelManager::new()),
+        stream_manager: Arc::new(stream::StreamManager::new()),
     });
 
     let tools_definition = serde_json::json!({
@@ -293,13 +295,14 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "stream_pane",
-                "description": "[UNAVAILABLE] MCP does not support server push. Use send_keys + capture_pane polling instead.",
+                "description": "Blocking read from a pane's output stream. Creates a stream on first call (returns current snapshot + subsequent output), reuses it on later calls (returns only new output). Blocks until data arrives or timeout_ms expires. Use with long-running commands instead of capture_pane polling.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "host": { "type": "string" },
-                        "session_name": { "type": "string" },
-                        "pane_id": { "type": "string" }
+                        "host": { "type": "string", "description": "Hostname, e.g. tf01" },
+                        "session_name": { "type": "string", "description": "Session name, e.g. agent-ops" },
+                        "pane_id": { "type": "string", "description": "Pane ID, e.g. %0" },
+                        "timeout_ms": { "type": "number", "description": "Blocking timeout in ms (default: 10000)" }
                     },
                     "required": ["host", "session_name", "pane_id"]
                 }
@@ -1003,7 +1006,7 @@ async fn run_mcp_stdio_loop(ctx: Arc<tools::ToolContext>, tools_def: Value) -> a
                     "protocolVersion": "2024-11-05",
                     "capabilities": { "tools": {} },
                     "serverInfo": { "name": "agent-ops-mcp", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "You are an AI agent managing remote Linux hosts via agent-ops. 你是通过 agent-ops 运维远程主机的 AI Agent。\n\n## Rules\n1. If a host is in the agent-ops registry (`host_list`), ALL operations MUST use agent-ops tools. NEVER run ssh/scp/rsync directly.\n2. Default session: `\"agent-ops\"`. Always `session_attach` first; `session_create` if not found.\n3. File transfer: `file_upload` / `file_download`. Commands: `exec` for one-shot (auto-waits, default 200 lines / 30s timeout, set `max_lines=0` for everything), `send_keys` for interactive programs.\n4. Use `wait_for_text` to block until a pattern appears — do NOT poll `capture_pane` in a loop.\n5. `stream_pane` is unavailable (MCP limitation). `session_attach`/`session_detach` only check existence, they don't attach/detach.\n\n## Workflow\n`host_list` → `session_attach host=<h> session_name=\"agent-ops\"` (or `session_create`) → `exec`/`send_keys` → `capture_pane`/`wait_for_text` → `close_pane` to clean up.\n- Default pane after session_create: `%0`.\n- `exec` supports `clear_screen: true` and `timeout_ms` for long commands.\n- After closing a pane: `respawn_pane` to restart the shell.\n- `cmd_escape` for direct rmux CLI access (advanced)."
+                    "instructions": "You are an AI agent managing remote Linux hosts via agent-ops. 你是通过 agent-ops 运维远程主机的 AI Agent。\n\n## Rules\n1. If a host is in the agent-ops registry (`host_list`), ALL operations MUST use agent-ops tools. NEVER run ssh/scp/rsync directly.\n2. Default session: `\"agent-ops\"`. Always `session_attach` first; `session_create` if not found.\n3. File transfer: `file_upload` / `file_download`. Commands: `exec` for one-shot (auto-waits, default 200 lines / 30s timeout, set `max_lines=0` for everything), `send_keys` for interactive programs.\n4. Use `wait_for_text` to block until a pattern appears — do NOT poll `capture_pane` in a loop.\n5. For long-running commands (tail -f, builds), use `stream_pane` for incremental output instead of polling `capture_pane`. `session_attach`/`session_detach` only check existence, they don't attach/detach.\n\n## Workflow\n`host_list` → `session_attach host=<h> session_name=\"agent-ops\"` (or `session_create`) → `exec`/`send_keys` → `capture_pane`/`wait_for_text` → `close_pane` to clean up.\n- Default pane after session_create: `%0`.\n- `exec` supports `clear_screen: true` and `timeout_ms` for long commands.\n- After closing a pane: `respawn_pane` to restart the shell.\n- `cmd_escape` for direct rmux CLI access (advanced)."
                 }))
             }
             _ => json_rpc_error(id, -32601, &format!("Method not found: {method}")),

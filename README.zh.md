@@ -160,7 +160,7 @@ agent-ops-mcp audit cleanup --older-than 30
 | 端口转发 | `tunnel_create`, `tunnel_list`, `tunnel_close` |
 | 部署升级 | `deploy_bridge` |
 
-> ⚠️ `stream_pane` 当前不可用 — MCP 协议限制。替代方案：`send_keys` + `capture_pane` 轮询。
+> 💡 `stream_pane` 适用于长命令实时输出监控（阻塞读，增量返回），替代 capture_pane 轮询。
 
 完整工具文档见 [docs/TOOLS.md](docs/TOOLS.md)。
 

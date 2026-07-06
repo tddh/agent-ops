@@ -459,3 +459,129 @@ pub async fn connect_to_bridge_hybrid(
         }
     }
 }
+
+pub async fn send_json_frame<S: tokio::io::AsyncWriteExt + Unpin>(stream: &mut S, value: &serde_json::Value) -> anyhow::Result<()> {
+    let json_str = serde_json::to_string(value)?;
+    let len = json_str.len() as u32;
+    stream.write_all(&len.to_le_bytes()).await?;
+    stream.write_all(json_str.as_bytes()).await?;
+    stream.flush().await?;
+    Ok(())
+}
+
+pub async fn recv_json_frame<S: tokio::io::AsyncReadExt + Unpin>(stream: &mut S) -> anyhow::Result<serde_json::Value> {
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf).await?;
+    let len = u32::from_le_bytes(len_buf) as usize;
+    if len > agent_ops_core::MAX_FRAME_SIZE {
+        anyhow::bail!("frame too large: {} bytes (max {})", len, agent_ops_core::MAX_FRAME_SIZE);
+    }
+    let mut buf = vec![0u8; len];
+    stream.read_exact(&mut buf).await?;
+    Ok(serde_json::from_slice(&buf)?)
+}
+
+pub async fn connect_to_bridge_quic_stream(
+    bridge_addr: &str,
+    auth_token: &str,
+    ca_cert_path: Option<&str>,
+    insecure: bool,
+    idle_timeout_secs: u64,
+    keepalive_secs: u64,
+) -> anyhow::Result<(quinn::Connection, quinn::SendStream, quinn::RecvStream)> {
+    let addr: std::net::SocketAddr = bridge_addr
+        .parse()
+        .with_context(|| format!("invalid bridge address: {}", bridge_addr))?;
+
+    let mut endpoint = quinn::Endpoint::client("[::]:0".parse()?)?;
+
+    let tls_config = build_quic_client_config(ca_cert_path, insecure)?;
+    let mut client_config = quinn::ClientConfig::new(std::sync::Arc::new(
+        quinn::crypto::rustls::QuicClientConfig::try_from(std::sync::Arc::new(tls_config))
+            .map_err(|e| anyhow::anyhow!("QUIC TLS config error: {e}"))?,
+    ));
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_idle_timeout(Some(Duration::from_secs(idle_timeout_secs).try_into()?));
+    transport.keep_alive_interval(Some(Duration::from_secs(keepalive_secs)));
+    client_config.transport_config(std::sync::Arc::new(transport));
+    endpoint.set_default_client_config(client_config);
+
+    let server_name = bridge_addr.split(':').next().unwrap_or("localhost");
+    let conn = tokio::time::timeout(
+        Duration::from_secs(10),
+        endpoint.connect(addr, server_name)?,
+    )
+    .await
+    .context("QUIC connect timeout")?
+    .context("QUIC connection failed")?;
+
+    let (mut send, mut recv) = conn
+        .open_bi()
+        .await
+        .context("failed to open QUIC auth stream")?;
+
+    send_auth_frame_quic(&mut send, auth_token).await?;
+
+    let mut response = [0u8; 3];
+    tokio::io::AsyncReadExt::read_exact(&mut recv, &mut response).await?;
+    if &response != b"OK\n" {
+        conn.close(1u32.into(), b"auth failed");
+        anyhow::bail!("bridge QUIC authentication failed");
+    }
+
+    tracing::info!("QUIC stream connected and authenticated to {}", bridge_addr);
+
+    let (mut json_send, json_recv) = conn
+        .open_bi()
+        .await
+        .context("failed to open QUIC json stream")?;
+
+    json_send.write_all(&[0x01]).await?;
+
+    Ok((conn, json_send, json_recv))
+}
+
+pub async fn connect_to_bridge_hybrid_stream(
+    bridge_addr: &str,
+    auth_token: &str,
+    ca_cert_path: Option<&str>,
+    max_retries: u32,
+    insecure: bool,
+    idle_timeout_secs: u64,
+    keepalive_secs: u64,
+) -> Result<BridgeStream> {
+    match connect_to_bridge_quic_stream(
+        bridge_addr, auth_token, ca_cert_path, insecure,
+        idle_timeout_secs, keepalive_secs,
+    )
+    .await
+    {
+        Ok((conn, send, recv)) => {
+            tracing::info!("connected via QUIC stream to {}", bridge_addr);
+            return Ok(BridgeStream::Quic { conn, send, recv });
+        }
+        Err(e) => {
+            tracing::debug!("QUIC stream connect failed (will try TCP): {}", e);
+        }
+    }
+
+    let mut attempt = 0;
+    loop {
+        match connect_to_bridge(bridge_addr, auth_token, ca_cert_path, insecure).await {
+            Ok(stream) => {
+                tracing::info!("connected via TCP/TLS stream to {}", bridge_addr);
+                return Ok(BridgeStream::Tcp(Box::new(stream)));
+            }
+            Err(e) if attempt < max_retries => {
+                attempt += 1;
+                let delay = Duration::from_millis(500 * 2u64.pow(attempt));
+                tracing::warn!(
+                    "TCP stream connect failed (attempt {}/{}), retrying in {:?}: {}",
+                    attempt, max_retries, delay, e
+                );
+                sleep(delay).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
