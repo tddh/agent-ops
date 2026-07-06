@@ -1,0 +1,21 @@
+[Unit]
+Description=RMUX Daemon - Terminal Multiplexer
+Documentation=https://rmux.io/docs
+After=network.target
+Before=rmux-bridge.service
+
+[Service]
+Type=simple
+User=root
+ExecStartPre=/bin/mkdir -p %h/.rmux
+Environment=RMUX_TMPDIR=%h/.rmux
+ExecStart=/usr/local/bin/rmux-daemon \
+    --__internal-daemon \
+    --config-default \
+    --config-quiet
+Restart=always
+RestartSec=3
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

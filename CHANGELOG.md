@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- 部署脚本拆分：`install-daemon.sh`（rmux daemon）+ `install-bridge.sh`（rmux-bridge），职责独立
+- `/etc/profile.d/agent-ops.sh`：自动设置 `RMUX_TMPDIR` 环境变量，用户登录后可直接 `rmux a -t agent-ops`
 - Bridge 请求级别日志：INFO 显示请求摘要（type/session/duration），DEBUG 显示完整请求/响应 JSON
 - Bridge `--log-level` 参数（默认 `info`，支持 trace/debug/info/warn/error，可通过 `RUST_LOG` 环境变量覆盖）
 - 端口转发功能：`tunnel_create`、`tunnel_list`、`tunnel_close` 三个 MCP 工具
@@ -12,8 +14,12 @@
   - 完整审计日志记录
 
 ### Changed
+- **rmux-sdk 从 0.7 升级到 0.8**（wire protocol v3，需同步升级 daemon）
 - 移除 JWT 认证支持，认证简化为纯静态 token 常量时间比较
 - 工作空间依赖统一到根 Cargo.toml，13 个共享依赖版本集中管理
+- `rmux-bridge.service` 添加 `After=rmux-daemon.service` 和 `Requires=rmux-daemon.service`
+- 部署脚本 socket 检测路径增加 `$HOME/.rmux`（与 daemon service 的 `RMUX_TMPDIR` 保持一致）
+- Bridge CLI `--rmux-socket` 默认值从 `/tmp/rmux-1000/default` 改为动态检测
 
 ### Security
 - host_filter 通配符过滤从手写正则改为 `glob::Pattern`，消除 ReDoS 风险

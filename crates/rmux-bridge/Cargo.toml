@@ -19,7 +19,7 @@ serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 anyhow.workspace = true
-rmux-sdk = "0.7"
+rmux-sdk = "0.8"
 regex.workspace = true
 sha2 = "0.10"
 futures.workspace = true

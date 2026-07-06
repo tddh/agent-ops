@@ -1720,9 +1720,13 @@ impl ProtocolProxy {
         };
 
         let result = if only_new {
-            match pane.wait_for_next(&decoded).await {
-                Ok(armed) => armed.await,
-                Err(e) => Err(e),
+            if self.rmux.has_capability("sdk.waits.armed").await.unwrap_or(false) {
+                match pane.wait_for_next(&decoded).await {
+                    Ok(armed) => armed.await,
+                    Err(e) => Err(e),
+                }
+            } else {
+                pane.wait_for(&decoded).await
             }
         } else {
             pane.wait_for(&decoded).await

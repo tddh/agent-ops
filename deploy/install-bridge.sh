@@ -1,5 +1,6 @@
 #!/bin/bash
-# 在目标 Linux 主机上部署 rmux-bridge + rmux daemon
+# 在目标 Linux 主机上部署 rmux-bridge
+# 前置条件：rmux-daemon 已安装并运行
 set -euo pipefail
 
 BRIDGE_BINARY="${1:?Usage: $0 <bridge-binary> <user@host> [<certs-dir>]}"
@@ -22,32 +23,38 @@ if [ ! -f "$HOST_CERT" ] || [ ! -f "$HOST_KEY" ]; then
     exit 1
 fi
 
-# 1. 安装 rmux daemon（如果未安装）
+# 1. 安装 rmux（如果未安装）
 ssh "$REMOTE_HOST" 'command -v rmux || curl -fsSL https://rmux.io/install.sh | sh'
 
-# 2. 创建目录
+# 2. 写入 profile.d，方便用户直接使用 rmux CLI（与 rmux-daemon.service 的 RMUX_TMPDIR 保持一致）
+ssh "$REMOTE_HOST" "echo 'export RMUX_TMPDIR=\$HOME/.rmux' | sudo tee /etc/profile.d/agent-ops.sh > /dev/null"
+echo "Wrote RMUX_TMPDIR=\$HOME/.rmux to /etc/profile.d/agent-ops.sh"
+
+# 3. 创建目录
 ssh "$REMOTE_HOST" "sudo mkdir -p $REMOTE_DIR/certs && sudo chown \$USER:\$USER $REMOTE_DIR"
 
-# 3. 上传 bridge 二进制
+# 4. 上传 bridge 二进制
 scp "$BRIDGE_BINARY" "$REMOTE_HOST:$REMOTE_DIR/"
+ssh "$REMOTE_HOST" "sudo chmod 755 $REMOTE_DIR/rmux-bridge"
 
-# 4. 上传主机专属的 TLS 证书
+# 5. 上传主机专属的 TLS 证书
 scp "$HOST_CERT" "$REMOTE_HOST:$REMOTE_DIR/certs/${HOST_IP}.crt"
 scp "$HOST_KEY" "$REMOTE_HOST:$REMOTE_DIR/certs/${HOST_IP}.key"
 ssh "$REMOTE_HOST" "chmod 600 $REMOTE_DIR/certs/${HOST_IP}.key"
 
-# 5. 写入 token
+# 6. 写入 token
 ssh "$REMOTE_HOST" "echo 'BRIDGE_AUTH_TOKEN=$BRIDGE_TOKEN' | sudo tee $REMOTE_DIR/bridge.env > /dev/null && sudo chmod 600 $REMOTE_DIR/bridge.env"
 
-# 6. 检测 rmux socket 路径
-RMUX_SOCK=$(ssh "$REMOTE_HOST" "ls /tmp/rmux-*/default 2>/dev/null | head -1 || echo '/tmp/rmux-0/default'")
+# 7. 检测 rmux socket 路径（优先 /run/rmux，然后 \$HOME/.rmux，回退 /tmp）
+RMUX_SOCK=$(ssh "$REMOTE_HOST" "for d in /run/rmux \$HOME/.rmux /tmp; do s=\$(ls \$d/rmux-*/default 2>/dev/null | head -1); [ -n \"\$s\" ] && echo \$s && break; done; [ -z \"\$s\" ] && echo '/tmp/rmux-0/default'")
 echo "Detected rmux socket: $RMUX_SOCK"
 
-# 7. 创建 systemd service
+# 8. 创建 rmux-bridge.service
 ssh "$REMOTE_HOST" "sudo tee /etc/systemd/system/rmux-bridge.service" <<SERVICE_EOF
 [Unit]
 Description=RMUX Bridge - TCP/TLS to Unix socket proxy
-After=network.target
+After=network.target rmux-daemon.service
+Requires=rmux-daemon.service
 
 [Service]
 Type=simple
@@ -66,7 +73,7 @@ RestartSec=5
 WantedBy=multi-user.target
 SERVICE_EOF
 
-# 8. 启动服务
+# 9. 启动 bridge 服务
 ssh "$REMOTE_HOST" "sudo systemctl daemon-reload && sudo systemctl enable --now rmux-bridge"
 
 echo ""

@@ -1,6 +1,6 @@
 # agent-ops 部署文档
 
-> 最后更新：2026-06-30
+> 最后更新：2026-07-06
 
 ## 架构
 
@@ -21,7 +21,7 @@
 | 组件 | 要求 |
 |------|------|
 | 目标主机 | Linux x86_64，systemd，有 SSH 访问 |
-| RMUX | `rmux` daemon 已安装并运行（`curl -fsSL https://rmux.io/install.sh \| sh`） |
+| RMUX | `rmux` 0.8+ daemon 已安装并运行（`curl -fsSL https://rmux.io/install.sh \| sh`） |
 | 构建机 | Rust 1.85+，`x86_64-linux-musl-gcc`（交叉编译用 `brew install FiloSottile/musl-cross/musl-cross`） |
 | 端口 | bridge 监听 9778（TLS/QUIC） |
 | 证书 | 自签名 TLS 证书（`openssl` 即可） |
@@ -47,20 +47,26 @@ just build-mcp              # 本机构建 mcp
 - `target/release/agent-ops-mcp` — MCP server（本地运行）
 - `target/x86_64-unknown-linux-musl/release/rmux-bridge` — bridge（部署到远程）
 
-### 2. 部署 bridge
+### 2. 部署
 
-`just deploy` 一键完成远程部署，**自动生成 TLS 证书**，无需手动操作。
+部署分两步：先部署 `rmux-daemon`，再部署 `rmux-bridge`。
 
-**本地测试**（`just certs`）：
+**步骤 2a：部署 daemon**
+
 ```bash
-just certs
-# → certs/bridge.crt（CN=rmux-bridge, SAN=localhost/127.0.0.1）
-# 仅用于本机调试，MCP server 和 bridge 都在同一台机器
+bash deploy/install-daemon.sh root@<your-bridge-ip>
 ```
 
-**远程部署**（`just deploy`）：
+做的事：
+- 安装 rmux（如未安装）
+- 上传项目定制的 `rmux-daemon.service`（配置 `RMUX_TMPDIR=%h/.rmux`）
+- 启动 daemon
+- 写入 `/etc/profile.d/agent-ops.sh`（`export RMUX_TMPDIR=$HOME/.rmux`），用户登录后可直接 `rmux a -t agent-ops`
+
+**步骤 2b：部署 bridge**
+
 ```bash
-# 一键部署：生成证书 → 上传二进制 → 配置 systemd → 启动服务
+# 一键：生成证书 → 上传二进制 → 配置 systemd → 启动
 just deploy host=root@<your-bridge-ip> token=<your-token>
 
 # 或手动：
@@ -70,15 +76,11 @@ BRIDGE_TOKEN="<your-token>" bash deploy/install-bridge.sh \
 ```
 
 部署脚本自动完成：
-- 在**远程主机上**用 openssl 生成 TLS 证书（CN/SAN 设为目标主机 IP）
+- 用 `deploy/generate-certs.sh` 在本地生成主机专属 TLS 证书（`certs/<ip>.crt` / `certs/<ip>.key`）
 - 上传 `rmux-bridge` 二进制到 `/opt/agent-ops/`
+- 上传证书到 `/opt/agent-ops/certs/`
 - 写入 token 到 `/opt/agent-ops/bridge.env`（权限 600）
 - 创建 `rmux-bridge.service`（`systemctl enable --now`）
-
-远程证书路径：`/opt/agent-ops/certs/bridge.{crt,key}`
-MCP server 需要用远程的 `bridge.crt`（或 CA 根证书 `ca.crt`）作为 `--ca-cert`。
-
-> ⚠️ 两套证书**不能混用**：本地测试用 `just certs` 生成的自签名证书；远程部署用 `just deploy`（通过 `install-bridge.sh`）自动签发独立主机证书。
 
 **其他 Justfile 命令：**
 
@@ -93,7 +95,8 @@ MCP server 需要用远程的 `bridge.crt`（或 CA 根证书 `ca.crt`）作为 
 ```ini
 [Unit]
 Description=RMUX Bridge - TCP/TLS to Unix socket proxy
-After=network.target
+After=network.target rmux-daemon.service
+Requires=rmux-daemon.service
 
 [Service]
 Type=simple
@@ -102,9 +105,9 @@ ExecStart=/opt/agent-ops/rmux-bridge \
     --listen-addr 0.0.0.0:9778 \
     --quic-listen-addr 0.0.0.0:9778 \
     --max-connections 256 \
-    --rmux-socket /tmp/rmux-1000/default \
-    --tls-cert /opt/agent-ops/certs/bridge.crt \
-    --tls-key /opt/agent-ops/certs/bridge.key
+    --rmux-socket /root/.rmux/rmux-0/default \
+    --tls-cert /opt/agent-ops/certs/<ip>.crt \
+    --tls-key /opt/agent-ops/certs/<ip>.key
 Restart=always
 RestartSec=5
 
@@ -226,7 +229,7 @@ ssh root@<your-bridge-ip> "systemctl status rmux-bridge"
 ssh root@<your-bridge-ip> "journalctl -u rmux-bridge -f"
 
 # 检查 RMUX socket 是否存在
-ssh root@<your-bridge-ip> "ls -la /tmp/rmux-*/default"
+ssh root@<your-bridge-ip> "ls -la \$HOME/.rmux/rmux-*/default"
 ```
 
 ### 审计查询
@@ -257,11 +260,15 @@ agent-ops-mcp audit cleanup --older-than 30
 ├── rmux-bridge                   # bridge 二进制
 ├── bridge.env                    # BRIDGE_AUTH_TOKEN（权限 600）
 └── certs/
-    ├── bridge.crt                # TLS 证书
-    └── bridge.key                # TLS 私钥（权限 600）
+    ├── <ip>.crt                  # 主机 TLS 证书
+    └── <ip>.key                  # TLS 私钥（权限 600）
 
 /etc/systemd/system/
-└── rmux-bridge.service          # systemd 服务文件
+├── rmux-daemon.service           # daemon systemd 服务
+└── rmux-bridge.service           # bridge systemd 服务
+
+/etc/profile.d/
+└── agent-ops.sh                  # RMUX_TMPDIR 环境变量
 ```
 
 ## 故障排查
@@ -272,19 +279,20 @@ agent-ops-mcp audit cleanup --older-than 30
 | `authentication failed` | 检查 `bridge.env` 中的 `BRIDGE_AUTH_TOKEN` 与 `hosts.yaml` 中 `bridge_token` 是否一致 |
 | TLS 握手失败 | `--ca-cert` 指向的证书是否与 bridge 端一致；或确认代码中启用了 `SkipVerification` |
 | `unknown request type` | bridge 版本过旧，重新交叉编译部署 |
-| RMUX socket 找不到 | `ls /tmp/rmux-*/default`，确认 rmux daemon 在运行（socket 路径取决于运行用户 UID：root → `/tmp/rmux-0/default`，普通用户 → `/tmp/rmux-1000/default`，部署脚本自动检测实际路径） |
+| RMUX socket 找不到 | `ls $HOME/.rmux/rmux-*/default`，确认 rmux daemon 在运行（socket 路径由 `RMUX_TMPDIR` 环境变量控制，项目 daemon service 配置为 `$HOME/.rmux`，部署脚本自动检测实际路径） |
 
 ## 安全
 
 ### Unix Socket
 
-rmux daemon 按运行用户 UID 创建 Unix socket：
-- root → `/tmp/rmux-0/default`
-- 普通用户（UID 1000） → `/tmp/rmux-1000/default`
+rmux daemon 的 socket 路径由 `RMUX_TMPDIR` 环境变量控制。项目定制的 `rmux-daemon.service` 设置 `RMUX_TMPDIR=%h/.rmux`（root 用户展开为 `/root/.rmux`），socket 位于 `$RMUX_TMPDIR/rmux-<UID>/default`。
 
-部署脚本自动检测实际路径，无需手动指定。Socket 权限为 `srw-------`（仅 owner 可读写），其他用户无法访问。
+部署脚本自动检测实际 socket 路径，无需手动指定。Socket 权限为 `srw-------`（仅 owner 可读写），其他用户无法访问。
 
-如果需要在非 `/tmp` 路径运行（避免系统 tmp 清理、或满足合规要求），配置 rmux daemon 使用自定义 socket 路径后，同步更新 bridge 的 `--rmux-socket` 参数。
+如果需要在自定义路径运行 rmux daemon，同步更新：
+- `rmux-daemon.service` 中的 `Environment=RMUX_TMPDIR=...`
+- `/etc/profile.d/agent-ops.sh` 中的 `export RMUX_TMPDIR=...`
+- bridge 的 `--rmux-socket` 参数（部署脚本自动检测）
 
 ### TLS 安全模式
 

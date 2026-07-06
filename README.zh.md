@@ -63,10 +63,14 @@ cargo build -p agent-ops-mcp --release
 just release-linux
 ```
 
-### 部署 bridge
+### 部署
 
 ```bash
-# 一键部署：生成证书、上传二进制、创建 systemd 服务
+# 步骤 1：部署 rmux daemon（远程主机）
+bash deploy/install-daemon.sh root@<your-bridge-ip>
+
+# 步骤 2：编译并部署 bridge（一键）
+just release-linux
 just deploy host=root@<your-bridge-ip> token=<your-token>
 ```
 

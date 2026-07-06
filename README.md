@@ -63,10 +63,14 @@ cargo build -p agent-ops-mcp --release
 just release-linux
 ```
 
-### Deploy Bridge
+### Deploy
 
 ```bash
-# One-shot: generate certs, upload binary, create systemd service
+# Step 1: Deploy rmux daemon (on remote host)
+bash deploy/install-daemon.sh root@<your-bridge-ip>
+
+# Step 2: Compile & deploy bridge (one-shot)
+just release-linux
 just deploy host=root@<your-bridge-ip> token=<your-token>
 ```
 
