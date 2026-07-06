@@ -1374,6 +1374,14 @@ async fn list_buffers(ctx: &ToolContext, args: Value) -> Result<Value> {
     Ok(response)
 }
 
+// TODO: SECURITY WARNING - paste_buffer is dangerous when target pane runs a shell.
+// The buffer content will be executed as commands, potentially causing data loss.
+// Consider implementing:
+// 1. Content validation (detect terminal output vs pure text)
+// 2. Safe paste mode that filters command prompts and dangerous commands
+// 3. Require explicit user approval before execution
+// 4. Add paste_buffer_safe variant with automatic sanitization
+// See: https://github.com/your-org/agent-ops/issues/XXX
 async fn paste_buffer(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
