@@ -370,7 +370,7 @@
 | `host` | string | ✅ | |
 | `session_name` | string | ✅ | |
 | `pane_id` | string | ✅ | 要分割的窗格 ID |
-| `direction` | string | ✅ | `vertical`（左右分屏）或 `horizontal`（上下分屏） |
+| `direction` | string | | `vertical`（左右分屏）或 `horizontal`（上下分屏），默认 `horizontal` |
 
 **返回** `{"ok": true, "pane_id": "%N"}` — 新 pane 的 ID
 
@@ -847,7 +847,7 @@ agent-ops-mcp audit cleanup [--db <path>] [--older-than <days>] [--max-size <mb>
 
 ### `batch_exec`
 
-Execute the same command on multiple hosts concurrently. Sends the command to all specified hosts in parallel, waits for each to complete via sentinel polling, captures output per host, and returns results keyed by hostname. Host-level failures (connection refused, timeout) do not affect other hosts. Non-zero exit codes are NOT errors — they are part of the command result. For self-terminating commands only.
+Execute the same command on multiple hosts concurrently. Sends the command to all specified hosts in parallel, waits for each to complete via sentinel polling, captures output per host, and returns results keyed by hostname. Host-level failures (connection refused, timeout) do not affect other hosts. Non-zero exit codes set per-host ok=false (but output is always captured — check per-host exit_code). For self-terminating commands only.
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|:---:|------|
@@ -888,7 +888,7 @@ Execute the same command on multiple hosts concurrently. Sends the command to al
 - `results` 以主机名为 key，直接取值不遍历
 - 单台主机故障（连接失败/超时/命令错误）不抛异常，在对应 result 中标记 `ok: false` + `error`
 - `total_duration_ms` 是墙钟时间（所有主机中最长的那台），反映并发效果
-- 非零 exit_code **不** 标记为 error——exit_code 是命令结果，不是执行失败
+- 非零 exit_code 会导致对应主机的 `ok: false`，但输出始终会捕获——检查 per-host 的 `exit_code` 字段判断命令实际结果
 - 内部通过 `agent-ops` session 的默认 pane `%0` 执行，行为与 `exec` 一致
 
 ### `batch_upload`
@@ -901,7 +901,7 @@ Upload a file or directory to multiple hosts concurrently.
 | `local_path` | string | ✅ | 本地文件或目录路径 |
 | `remote_path` | string | ✅ | 远程目标路径 |
 | `overwrite` | string | | overwrite\|skip\|rename\|error（默认 overwrite） |
-| `exclude` | string[] | | 排除 glob 模式（仅目录上传） |
+| `exclude` | string[] | | 排除 glob 模式 |
 | `concurrency` | integer | | 最大并发连接数（默认 5，0=不限制） |
 
 **返回**
@@ -1048,3 +1048,45 @@ tunnel_create host="tf01" local_port=8080 remote_host="api.internal" remote_port
   "closed": "t_abc123"
 }
 ```
+
+---
+
+## 部署升级
+
+### `deploy_bridge`
+
+将编译好的 rmux-bridge 二进制部署到远程主机并重启服务。仅支持升级场景（目标主机必须已有 bridge 运行）。首次部署请通过 SSH 执行 `deploy/install-bridge.sh`。
+
+内部流程：查询 systemd ExecStart → 校验路径 → 上传二进制 → 设权限 → 替换 → nohup 后台重启。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `hosts` | string[] | ✅ | 目标主机名 |
+| `binary_path` | string | ✅ | 本地编译好的 bridge 二进制路径 |
+| `remote_path` | string | | 远程目标路径（不传则从 systemd 自动获取） |
+| `concurrency` | integer | | 最大并发数，默认 3 |
+
+**返回**
+
+```json
+{
+  "ok": true,
+  "binary": "target/x86_64-unknown-linux-musl/release/rmux-bridge",
+  "binary_size": 11052600,
+  "total": 2,
+  "success": 2,
+  "failed": 0,
+  "total_duration_ms": 3899,
+  "results": {
+    "tf001": { "ok": true, "status": "restarted", "output": "deployed", "exit_code": 0 }
+  }
+}
+```
+
+| status | 含义 |
+|--------|------|
+| `restarted` | ✅ 部署成功 |
+| `first_time_deploy` | systemd unit 不存在，走 SSH 首次部署 |
+| `path_mismatch` | 指定的路径与 systemd ExecStart 不一致 |
+| `bridge_unreachable` | 无法连接目标主机 |
+| `upload_failed` | 文件传输失败 |

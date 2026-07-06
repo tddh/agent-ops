@@ -134,6 +134,8 @@ close_pane(host="tf01", session_name="agent-ops", pane_id="%0")  # ❌ 违反规
 | 多窗格分屏 | `split_pane` + `exec` |
 | 特殊按键 | `send_keys`（`\x03`=Ctrl-C, `\n`=Enter） |
 | 搜索 | `find_pane_text` |
+| 大输出命令 | `collect_until_exit`（比 exec 更高效） |
+| 等终端稳定 | `wait_stable`（发送命令后待渲染完成再 capture） |
 | 多机并发 | `batch_exec` / `batch_upload` / `batch_download` |
 
 ## 常见场景
@@ -178,6 +180,7 @@ batch_exec(hosts=["tf01", "dns-backup"], command="hostname")
 | `pane id %X was not found` | pane_id 错误或 pane 已关闭 | `list_window_panes` 确认当前 pane_id |
 | `session not found` | 会话不存在 | `session_create` 创建会话 |
 | `connection refused` | bridge 未运行 | 检查 `systemctl status rmux-bridge` |
+| `TCP connect timeout` | 主机离线或网络不通 | 确认主机在线、bridge 端口可达 |
 | `authentication failed` | token 不匹配 | 检查 `hosts.yaml` 中的 `bridge_token` |
 | `recv: connection lost` | bridge 重启或网络中断 | 等待后重试 |
 | `pane still active` | spawn/shell_command 时 pane 非空闲 | 先 `close_pane` 或换 pane |

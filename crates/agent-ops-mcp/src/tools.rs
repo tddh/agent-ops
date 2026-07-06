@@ -23,7 +23,7 @@ pub struct ToolContext {
 
 pub async fn execute_tool(ctx: &ToolContext, tool_name: &str, args: Value) -> Result<Value> {
     match tool_name {
-        "_usage_rules" => Ok(json!({})),
+        "agent_ops_usage_rules" => Ok(json!({})),
         "host_list" => host_list(ctx).await,
         "host_filter" => host_filter(ctx, args).await,
         "session_create" => session_create(ctx, args).await,
@@ -84,6 +84,7 @@ pub async fn execute_tool(ctx: &ToolContext, tool_name: &str, args: Value) -> Re
         "capture_region" => capture_region(ctx, args).await,
         "wait_for_bytes" => wait_for_bytes(ctx, args).await,
         "wait_stable" => wait_stable(ctx, args).await,
+        "deploy_bridge" => deploy_bridge(ctx, args).await,
         _ => anyhow::bail!("unknown tool: {}", tool_name),
     }
 }
@@ -1063,7 +1064,7 @@ async fn close_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
 async fn close_window(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
-    let window_index = args["window_index"].as_u64().unwrap_or(0);
+    let window_index = args["window_index"].as_u64().context("missing 'window_index'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
     let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
     send_json_frame(&mut tls, &json!({ "type": "close_window", "session_name": session_name, "window_index": window_index })).await?;
@@ -1075,7 +1076,7 @@ async fn close_window(ctx: &ToolContext, args: Value) -> Result<Value> {
 async fn rename_window(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
-    let window_index = args["window_index"].as_u64().unwrap_or(0);
+    let window_index = args["window_index"].as_u64().context("missing 'window_index'")?;
     let name = args["name"].as_str().context("missing 'name'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
     let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
@@ -1088,7 +1089,7 @@ async fn rename_window(ctx: &ToolContext, args: Value) -> Result<Value> {
 async fn list_window_panes(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
-    let window_index = args["window_index"].as_u64().unwrap_or(0);
+    let window_index = args["window_index"].as_u64().context("missing 'window_index'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
     let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
     send_json_frame(&mut tls, &json!({ "type": "list_window_panes", "session_name": session_name, "window_index": window_index })).await?;
@@ -1100,7 +1101,7 @@ async fn list_window_panes(ctx: &ToolContext, args: Value) -> Result<Value> {
 async fn resize_window(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
-    let window_index = args["window_index"].as_u64().unwrap_or(0);
+    let window_index = args["window_index"].as_u64().context("missing 'window_index'")?;
     let width = args["width"].as_u64()
         .map(|v| u16::try_from(v).context("width must be 0-65535"))
         .transpose()?;
@@ -1118,7 +1119,7 @@ async fn resize_window(ctx: &ToolContext, args: Value) -> Result<Value> {
 async fn select_window(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
-    let window_index = args["window_index"].as_u64().unwrap_or(0);
+    let window_index = args["window_index"].as_u64().context("missing 'window_index'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
     let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
     send_json_frame(&mut tls, &json!({ "type": "select_window", "session_name": session_name, "window_index": window_index })).await?;
@@ -1130,7 +1131,7 @@ async fn select_window(ctx: &ToolContext, args: Value) -> Result<Value> {
 async fn select_layout(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
-    let window_index = args["window_index"].as_u64().unwrap_or(0);
+    let window_index = args["window_index"].as_u64().context("missing 'window_index'")?;
     let layout = args["layout"].as_str().context("missing 'layout'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
     let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
@@ -1166,7 +1167,7 @@ async fn pane_info(ctx: &ToolContext, args: Value) -> Result<Value> {
 async fn window_info(ctx: &ToolContext, args: Value) -> Result<Value> {
     let host_name = args["host"].as_str().context("missing 'host'")?;
     let session_name = args["session_name"].as_str().context("missing 'session_name'")?;
-    let window_index = args["window_index"].as_u64().unwrap_or(0);
+    let window_index = args["window_index"].as_u64().context("missing 'window_index'")?;
     let host = ctx.router.get(host_name).with_context(|| format!("host not found: {}", host_name))?;
     let mut tls = connect_to_bridge_hybrid(&host.bridge_addr, &host.bridge_token, ctx.ca_cert_path.as_deref(), 3, ctx.insecure).await?;
     send_json_frame(&mut tls, &json!({ "type": "window_info", "session_name": session_name, "window_index": window_index })).await?;
@@ -1621,4 +1622,152 @@ async fn wait_stable(ctx: &ToolContext, args: Value) -> Result<Value> {
     let response = recv_json_frame(&mut tls).await?;
     audit(ctx, AuditAction::WaitStable, host_name, session_name, Some(pane_id), "", None, response["stable"].as_bool().unwrap_or(false), 0, None).await;
     Ok(response)
+}
+
+async fn deploy_bridge(ctx: &ToolContext, args: Value) -> Result<Value> {
+    let hosts_arg: Vec<String> = args["hosts"]
+        .as_array().context("missing 'hosts'")?
+        .iter().filter_map(|v| v.as_str().map(String::from)).collect();
+
+    if hosts_arg.is_empty() {
+        return Ok(json!({"ok": true, "total": 0, "success": 0, "failed": 0,
+            "total_duration_ms": 0, "results": {}, "error": "empty hosts list"}));
+    }
+
+    let binary_path = args["binary_path"].as_str().context("missing 'binary_path'")?;
+    let user_remote = args["remote_path"].as_str();
+    let concurrency_limit = args["concurrency"].as_u64().unwrap_or(3) as usize;
+
+    let metadata = tokio::fs::metadata(binary_path).await
+        .with_context(|| format!("binary not found at {}", binary_path))?;
+    let binary_size = metadata.len();
+
+    let targets = resolve_hosts(ctx, &hosts_arg);
+    let semaphore = make_semaphore(concurrency_limit);
+    let ca_cert = ctx.ca_cert_path.clone();
+    let insecure = ctx.insecure;
+    let start = std::time::Instant::now();
+
+    let mut handles: Vec<tokio::task::JoinHandle<(String, Value)>> = Vec::new();
+
+    for (host_name, host_opt) in targets {
+        let ca_cert = ca_cert.clone();
+            let binary_path = binary_path.to_string();
+        let user_remote = user_remote.map(|s| s.to_string());
+            let sem = semaphore.clone();
+
+        handles.push(tokio::spawn(async move {
+            let _permit = if let Some(s) = &sem { s.acquire().await.ok() } else { None };
+
+            let host = match host_opt {
+                Some(h) => h,
+                None => return (host_name.clone(), json!({
+                    "ok": false, "status": "host_not_found",
+                    "error": "host not found in registry"
+                })),
+            };
+
+            let mut stream = match connect_to_bridge_hybrid(
+                &host.bridge_addr, &host.bridge_token,
+                ca_cert.as_deref(), 3, insecure,
+            ).await {
+                Ok(s) => s,
+                Err(e) => return (host_name.clone(), json!({
+                    "ok": false, "status": "bridge_unreachable",
+                    "error": format!("{:#}", e)
+                })),
+            };
+
+            let session_name = "agent-ops";
+            let pane_id = match create_session_inner(&mut stream, session_name).await {
+                Ok(resp) => resp.get("pane_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("%0")
+                    .to_string(),
+                Err(e) => return (host_name.clone(), json!({
+                    "ok": false, "status": "session_failed",
+                    "error": format!("{:#}", e)
+                })),
+            };
+
+            let exec_result = exec_in_session(&mut stream, session_name, &pane_id,
+                "systemctl show rmux-bridge -p ExecStart --value 2>/dev/null | cut -d' ' -f1",
+                10000, 50).await;
+
+            let systemd_path = exec_result.output.trim().to_string();
+            if systemd_path.is_empty() {
+                return (host_name.clone(), json!({
+                    "ok": false, "status": "first_time_deploy",
+                    "error": "rmux-bridge service not found — use deploy/install-bridge.sh via SSH"
+                }));
+            }
+
+            let remote_path = match &user_remote {
+                Some(u) => {
+                    if u != &systemd_path {
+                        return (host_name.clone(), json!({
+                            "ok": false, "status": "path_mismatch",
+                            "error": format!("specified path '{}' does not match systemd ExecStart '{}'", u, systemd_path)
+                        }));
+                    }
+                    u.clone()
+                }
+                None => systemd_path,
+            };
+
+            let upload_new_path = format!("{}.new", remote_path);
+            let upload_result = crate::files::upload_file(
+                &host, &binary_path, &upload_new_path,
+                ca_cert.as_deref(), insecure,
+                crate::files::OverwriteMode::Overwrite, &[],
+            ).await;
+
+            match upload_result {
+                Err(e) => return (host_name.clone(), json!({
+                    "ok": false, "status": "upload_failed",
+                    "error": format!("{:#}", e)
+                })),
+                Ok(files) => {
+                    let file_failed = files.iter().filter(|f| f.status == "failed").count();
+                    if file_failed > 0 {
+                        return (host_name.clone(), json!({
+                            "ok": false, "status": "upload_failed",
+                            "error": format!("{} file(s) failed to upload", file_failed)
+                        }));
+                    }
+                }
+            }
+
+            let cmd = format!("chmod +x {new} && nohup sh -c 'sleep 1 && mv {new} {path} && systemctl restart rmux-bridge' > /dev/null 2>&1 & echo deployed",
+                new = upload_new_path, path = remote_path);
+            let result = exec_in_session(&mut stream, session_name, &pane_id,
+                &cmd, 10000, 50).await;
+
+            (host_name.clone(), json!({
+                "ok": result.ok && result.error.is_none(),
+                "status": if result.ok && result.error.is_none() { "restarted" } else { "exec_failed" },
+                "output": result.output,
+                "exit_code": result.exit_code,
+                "error": result.error,
+            }))
+        }));
+    }
+
+    let (results_map, success_count, failed_count) = collect_batch_results(handles).await;
+    let total_duration_ms = start.elapsed().as_millis() as u64;
+
+    audit(ctx, AuditAction::DeployBridge, "", "", None,
+        &format!("hosts:{:?} binary:{}", hosts_arg, binary_path), None,
+        failed_count == 0, total_duration_ms, None).await;
+
+    Ok(json!({
+        "ok": failed_count == 0,
+        "binary": binary_path,
+        "binary_size": binary_size,
+        "total": hosts_arg.len(),
+        "success": success_count,
+        "failed": failed_count,
+        "total_duration_ms": total_duration_ms,
+        "results": results_map,
+    }))
 }

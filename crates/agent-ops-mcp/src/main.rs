@@ -103,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "host_list",
-                "description": "List all known remote hosts and their status",
+                "description": "List all known remote hosts",
                 "inputSchema": { "type": "object", "properties": {}, "required": [] }
             },
             {
@@ -143,7 +143,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "session_attach",
-                "description": "Check if a session exists (check-only, does NOT actually attach)",
+                "description": "Check if a session exists (check-only)",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -155,7 +155,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "session_detach",
-                "description": "Check if a session exists (check-only, does NOT actually detach)",
+                "description": "Check if a session exists (check-only)",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -280,7 +280,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "split_window",
-                "description": "Create a new empty window in a session. Use split_pane for pane-level splits. direction param currently unused.",
+                "description": "Create a new empty window in a session. Use split_pane for pane-level splits.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -360,7 +360,7 @@ async fn main() -> anyhow::Result<()> {
                         "pane_id": { "type": "string" },
                         "direction": { "type": "string", "description": "horizontal or vertical" }
                     },
-                    "required": ["host", "session_name", "pane_id", "direction"]
+                    "required": ["host", "session_name", "pane_id"]
                 }
             },
             {
@@ -431,7 +431,7 @@ async fn main() -> anyhow::Result<()> {
                         "pane_ids": { "type": "array", "items": { "type": "string" }, "description": "Target pane IDs, e.g. [\"%0\", \"%4\"]" },
                         "keys": { "type": "string" }
                     },
-                    "required": ["host", "session_name", "pane_ids", "keys"]
+                    "required": ["host", "session_name", "keys"]
                 }
             },
             {
@@ -443,7 +443,7 @@ async fn main() -> anyhow::Result<()> {
                         "host": { "type": "string" },
                         "args": { "type": "array", "items": { "type": "string" }, "description": "rmux CLI arguments" }
                     },
-                    "required": ["host", "args"]
+                    "required": ["host"]
                 }
             },
             {
@@ -594,7 +594,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "batch_exec",
-                "description": "Multi-host command execution: sends the same command to all specified hosts concurrently, waits for each to complete (sentinel polling), captures output per host, and returns results keyed by hostname. Default 5 concurrent connections, 200 lines/host, 2min timeout/host. Host-level failures (connection refused, timeout) are marked ok=false but do NOT affect other hosts. Non-zero exit codes are NOT treated as errors — they are part of the command result. For self-terminating commands only (ls, cat, grep, df, systemctl, kubectl, curl). NOT for interactive programs (vim, htop) or non-terminating commands (tail -f, ping). Uses the agent-ops session default pane (%0) on each host. Use this when you need to run the same command on multiple machines in one round — saves N-1 round trips compared to calling exec per host.",
+                "description": "Multi-host command execution: sends the same command to all specified hosts concurrently, waits for each to complete (sentinel polling), captures output per host, and returns results keyed by hostname. Default 5 concurrent connections, 200 lines/host, 2min timeout/host. Host-level failures (connection refused, timeout) are marked ok=false but do NOT affect other hosts. Non-zero exit codes set per-host ok=false (but output is always captured — check per-host exit_code). For self-terminating commands only (ls, cat, grep, df, systemctl, kubectl, curl). NOT for interactive programs (vim, htop) or non-terminating commands (tail -f, ping). Uses the agent-ops session default pane (%0) on each host. Use this when you need to run the same command on multiple machines in one round — saves N-1 round trips compared to calling exec per host.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -617,7 +617,7 @@ async fn main() -> anyhow::Result<()> {
                         "local_path": { "type": "string", "description": "Local file or directory path" },
                         "remote_path": { "type": "string", "description": "Remote destination path" },
                         "overwrite": { "type": "string", "description": "overwrite|skip|rename|error (default: overwrite)" },
-                        "exclude": { "type": "array", "items": { "type": "string" }, "description": "Glob patterns to exclude (directories only)" },
+                        "exclude": { "type": "array", "items": { "type": "string" }, "description": "Glob patterns to exclude" },
                         "concurrency": { "type": "integer", "description": "Max concurrent connections (default: 5, 0=unlimited)" }
                     },
                     "required": ["hosts", "local_path", "remote_path"]
@@ -934,6 +934,20 @@ async fn main() -> anyhow::Result<()> {
                         "timeout_ms": { "type": "number", "description": "Max total wait time in ms (default: 30000)" }
                     },
                     "required": ["host", "session_name", "pane_id"]
+                }
+            },
+            {
+                "name": "deploy_bridge",
+                "description": "Deploy a compiled rmux-bridge binary to remote hosts and restart the service. For upgrade deployments only — target hosts must already have rmux-bridge running. First-time deployments must use deploy/install-bridge.sh via SSH. Internal steps: upload binary → set permissions → replace existing → restart service via nohup.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "hosts": { "type": "array", "items": { "type": "string" }, "description": "Target hostnames (must already have bridge running)" },
+                        "binary_path": { "type": "string", "description": "Local path to compiled rmux-bridge binary" },
+                        "remote_path": { "type": "string", "description": "Remote binary path (auto-detected from systemd ExecStart if omitted)" },
+                        "concurrency": { "type": "integer", "description": "Max concurrent deployments (default: 3)" }
+                    },
+                    "required": ["hosts", "binary_path"]
                 }
             }
         ]

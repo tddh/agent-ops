@@ -141,7 +141,7 @@ Audit data stored at `~/.agent-ops/audit.db`, retained 90 days, max 500 MB.
 
 ## Tools
 
-60 MCP tools covering the full terminal lifecycle:
+61 MCP tools covering the full terminal lifecycle:
 
 | Category | Tools |
 |----------|-------|
@@ -157,6 +157,7 @@ Audit data stored at `~/.agent-ops/audit.db`, retained 90 days, max 500 MB.
 | File | `file_upload`, `file_download` |
 | Batch | `batch_exec`, `batch_upload`, `batch_download` |
 | Tunnel | `tunnel_create`, `tunnel_list`, `tunnel_close` |
+| Deploy | `deploy_bridge` |
 
 > ⚠️ `stream_pane` 当前不可用 — MCP 协议限制。替代方案：`send_keys` + `capture_pane` 轮询。
 
@@ -183,7 +184,7 @@ just build       # cargo build --workspace
 
 ## Docs
 
-- [Tool Reference](docs/TOOLS.md) — 60 MCP tools with parameters and return values
+- [Tool Reference](docs/TOOLS.md) — 61 MCP tools with parameters and return values
 - [Deployment Guide](docs/DEPLOY.md) — Architecture, build, deploy, operations, security
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)

@@ -131,4 +131,5 @@ pub enum AuditAction {
     CaptureRegion,
     WaitForBytes,
     WaitStable,
+    DeployBridge,
 }

@@ -24,8 +24,9 @@ pub async fn connect_to_bridge(
     ca_cert_path: Option<&str>,
     insecure: bool,
 ) -> Result<tokio_rustls::client::TlsStream<TcpStream>> {
-    let tcp = TcpStream::connect(bridge_addr)
+    let tcp = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(bridge_addr))
         .await
+        .context("TCP connect timeout after 5s")?
         .with_context(|| format!("failed to connect to bridge at {}", bridge_addr))?;
 
     let tls_config = build_tls_client_config(ca_cert_path, insecure)?;
