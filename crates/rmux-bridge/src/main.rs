@@ -16,6 +16,7 @@ use tokio::sync::Semaphore;
 use tokio_rustls::TlsAcceptor;
 use tokio_yamux::{Config, Session, StreamHandle};
 
+use crate::interactive::InteractiveSession;
 use crate::protocol::ProtocolProxy;
 
 async fn handle_stream(mut stream: StreamHandle) -> anyhow::Result<()> {
@@ -132,12 +133,19 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
+                let session_state: std::sync::Arc<
+                    tokio::sync::Mutex<Option<InteractiveSession>>,
+                > = std::sync::Arc::new(tokio::sync::Mutex::new(None));
+
                 loop {
                     match conn.accept_bi().await {
                         Ok((send, recv)) => {
                             let proxy = protocol_proxy.clone();
+                            let state = session_state.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = files::handle_quic_stream(send, recv, proxy).await {
+                                if let Err(e) =
+                                    files::handle_quic_stream(send, recv, proxy, state).await
+                                {
                                     tracing::warn!("QUIC stream error: {}", e);
                                 }
                             });
