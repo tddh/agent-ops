@@ -182,29 +182,28 @@ pub async fn handle_interactive_data(
     };
 
     let pane = proxy.get_pane(&session_name, &pane_id).await?;
+    let mut output_stream = pane.output_stream().await?;
 
-    let input_to_pty = {
+    // mpsc channel 解耦 output stream 读取，避免 try_join! 互相等待
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
+
+    let output_task = {
         let pane = pane.clone();
-        async move {
-            let mut buf = [0u8; 4096];
-            while let Some(n) = recv.read(&mut buf).await? {
-                let keys = String::from_utf8_lossy(&buf[..n]).into_owned();
-                pane.send_key(&keys).await?;
-            }
-            Ok::<_, anyhow::Error>(())
-        }
-    };
-
-    let pty_to_output = {
-        let mut output_stream = pane.output_stream().await?;
         let session_state = session_state.clone();
-        async move {
+        tokio::spawn(async move {
             while let Ok(Some(chunk)) = output_stream.next().await {
                 match chunk {
                     PaneOutputChunk::Bytes { bytes, .. } => {
-                        send.write_all(&bytes).await?;
+                        if tx.send(bytes).await.is_err() {
+                            break;
+                        }
                     }
-                    PaneOutputChunk::Lag(_) => continue,
+                    PaneOutputChunk::Lag(_) => {
+                        if let Ok(snapshot) = pane.snapshot().await {
+                            let text = snapshot.visible_text().into_bytes();
+                            let _ = tx.send(text).await;
+                        }
+                    }
                     _ => continue,
                 }
             }
@@ -213,11 +212,34 @@ pub async fn handle_interactive_data(
                 s.exit_code = Some(0);
                 s.exit_notify.notify_one();
             }
-            Ok::<_, anyhow::Error>(())
-        }
+        })
     };
 
-    tokio::try_join!(input_to_pty, pty_to_output)?;
+    // 主循环：select! 同时处理 stdin 输入和 PTY 输出
+    let mut buf = [0u8; 4096];
+    loop {
+        tokio::select! {
+            result = recv.read(&mut buf) => {
+                match result? {
+                    Some(n) => {
+                        let keys = String::from_utf8_lossy(&buf[..n]).into_owned();
+                        pane.send_key(&keys).await?;
+                    }
+                    None => break,
+                }
+            }
+            maybe_bytes = rx.recv() => {
+                match maybe_bytes {
+                    Some(bytes) => {
+                        send.write_all(&bytes).await?;
+                    }
+                    None => break,
+                }
+            }
+        }
+    }
+
+    output_task.abort();
     Ok(())
 }
 
