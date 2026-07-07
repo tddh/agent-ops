@@ -182,80 +182,77 @@ pub async fn handle_interactive_data(
     };
 
     let pane = proxy.get_pane(&session_name, &pane_id).await?;
-    let mut output_stream = pane.output_stream().await?;
 
-    // mpsc channel 解耦 output stream 读取，避免 try_join! 互相等待
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
 
-    let output_task = {
+    // 专用 OS 线程处理 output（WezTerm 模式：阻塞 I/O 在独立线程）
+    // 使用 blocking_send 跨线程推送到 tokio channel（Zellij 模式：有界通道 + backpressure）
+    let output_thread = {
+        let pane = pane.clone();
         let session_state = session_state.clone();
-        tokio::spawn(async move {
-            let mut last_log = std::time::Instant::now();
-            loop {
-                let t0 = std::time::Instant::now();
-                match output_stream.poll_once().await {
-                    Ok(chunks) => {
-                        let t1 = t0.elapsed();
-                        let mut any = false;
-                        for chunk in &chunks {
-                            if let PaneOutputChunk::Bytes { bytes, .. } = chunk {
-                                any = true;
-                                if tx.send(bytes.clone()).await.is_err() {
-                                    return;
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("output thread runtime");
+            rt.block_on(async move {
+                let mut output_stream = match pane.output_stream().await {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+                loop {
+                    match output_stream.poll_once().await {
+                        Ok(chunks) => {
+                            for chunk in chunks {
+                                if let PaneOutputChunk::Bytes { bytes, .. } = chunk {
+                                    if tx.blocking_send(bytes).is_err() {
+                                        return;
+                                    }
                                 }
                             }
                         }
-                        if any {
-                            let total_bytes: usize = chunks.iter()
-                                .filter_map(|c| match c { PaneOutputChunk::Bytes{bytes,..}=>Some(bytes.len()), _=>None })
-                                .sum();
-                            if t1 > std::time::Duration::from_millis(5) || last_log.elapsed() > std::time::Duration::from_secs(5) {
-                                tracing::info!("poll_once={:.1}ms chunks={} bytes={}", t1.as_secs_f64()*1000.0, chunks.len(), total_bytes);
-                                last_log = std::time::Instant::now();
+                        Err(_) => {
+                            let mut state = session_state.blocking_lock();
+                            if let Some(ref mut s) = *state {
+                                s.exit_code = Some(0);
+                                s.exit_notify.notify_one();
                             }
-                        } else {
-                            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                            return;
                         }
-                    }
-                    Err(e) => {
-                        tracing::warn!("poll_once error: {:?}", e);
-                        let mut state = session_state.lock().await;
-                        if let Some(ref mut s) = *state {
-                            s.exit_code = Some(0);
-                            s.exit_notify.notify_one();
-                        }
-                        return;
                     }
                 }
-            }
+            });
         })
     };
 
-    // 主循环：select! 同时处理 stdin 输入和 PTY 输出
-    let mut buf = [0u8; 4096];
+    // 主循环：stdin → send_key 在独立 tokio task（Zellij 模式：读写分离）
+    let mut input_task = {
+        let pane = pane.clone();
+        tokio::spawn(async move {
+            let mut buf = [0u8; 4096];
+            while let Some(n) = recv.read(&mut buf).await? {
+                let keys = String::from_utf8_lossy(&buf[..n]).into_owned();
+                pane.send_key(&keys).await?;
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+    };
+
     loop {
         tokio::select! {
-            result = recv.read(&mut buf) => {
-                match result? {
-                    Some(n) => {
-                        let keys = String::from_utf8_lossy(&buf[..n]).into_owned();
-                        pane.send_key(&keys).await?;
-                    }
+            maybe_bytes = rx.recv() => {
+                match maybe_bytes {
+                    Some(bytes) => { send.write_all(&bytes).await?; }
                     None => break,
                 }
             }
-            maybe_bytes = rx.recv() => {
-                match maybe_bytes {
-                    Some(bytes) => {
-                        send.write_all(&bytes).await?;
-                    }
-                    None => break,
-                }
+            _ = &mut input_task => {
+                break;
             }
         }
     }
 
-    output_task.abort();
+    output_thread.join().ok();
     Ok(())
 }
 
