@@ -759,7 +759,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "paste_buffer",
-                "description": "⚠️ DANGEROUS: Paste a named buffer into a pane. If the target pane is running a shell (bash/zsh), the buffer content will be executed as commands. This can cause unintended command execution and data loss. ALWAYS use `list_buffers` first to check buffer content, and get explicit user approval before pasting. If buffer_name is omitted, pastes the most recent buffer.",
+                "description": "⚠️ DANGEROUS: Paste a named buffer into a pane. If the target pane is running a shell (bash/zsh), the buffer content will be executed as commands. This can cause unintended command execution and data loss. BEFORE pasting: (1) use `list_buffers` to check buffer content, (2) print the first 10 lines of buffer content to the user for review, (3) get explicit user approval. If buffer_name is omitted, pastes the most recent buffer.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
