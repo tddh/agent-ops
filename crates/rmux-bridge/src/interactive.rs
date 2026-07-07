@@ -183,7 +183,7 @@ pub async fn handle_interactive_data(
 
     let pane = proxy.get_pane(&session_name, &pane_id).await?;
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
 
     // 专用 OS 线程处理 output（WezTerm 模式：阻塞 I/O 在独立线程）
     // 使用 blocking_send 跨线程推送到 tokio channel（Zellij 模式：有界通道 + backpressure）
@@ -205,8 +205,12 @@ pub async fn handle_interactive_data(
                         Ok(chunks) => {
                             for chunk in chunks {
                                 if let PaneOutputChunk::Bytes { bytes, .. } = chunk {
-                                    if tx.blocking_send(bytes).is_err() {
-                                        return;
+                                    match tx.try_send(bytes) {
+                                        Ok(()) => {}
+                                        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return,
+                                        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                            std::thread::sleep(std::time::Duration::from_millis(1));
+                                        }
                                     }
                                 }
                             }
