@@ -166,6 +166,8 @@ pub async fn connect(
     result
 }
 
+/// stdin → QUIC 数据流转发
+/// Ctrl+\ (0x1C) = 本地退出（发送 Detach 后断开，session 继续存活）
 async fn stdin_to_quic(send: &mut quinn::SendStream) -> Result<()> {
     let mut stdin = tokio::io::stdin();
     let mut buf = [0u8; 4096];
@@ -173,6 +175,9 @@ async fn stdin_to_quic(send: &mut quinn::SendStream) -> Result<()> {
         let n = stdin.read(&mut buf).await?;
         if n == 0 {
             break;
+        }
+        if buf[..n].contains(&0x1c) {
+            return Ok(());
         }
         send.write_all(&buf[..n]).await?;
     }

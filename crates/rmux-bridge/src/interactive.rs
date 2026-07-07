@@ -190,27 +190,35 @@ pub async fn handle_interactive_data(
     let output_task = {
         let session_state = session_state.clone();
         tokio::spawn(async move {
+            let mut last_log = std::time::Instant::now();
             loop {
+                let t0 = std::time::Instant::now();
                 match output_stream.poll_once().await {
                     Ok(chunks) => {
+                        let t1 = t0.elapsed();
                         let mut any = false;
-                        for chunk in chunks {
-                            match chunk {
-                                PaneOutputChunk::Bytes { bytes, .. } => {
-                                    any = true;
-                                    if tx.send(bytes).await.is_err() {
-                                        return;
-                                    }
+                        for chunk in &chunks {
+                            if let PaneOutputChunk::Bytes { bytes, .. } = chunk {
+                                any = true;
+                                if tx.send(bytes.clone()).await.is_err() {
+                                    return;
                                 }
-                                PaneOutputChunk::Lag(_) => continue,
-                                _ => continue,
                             }
                         }
-                        if !any {
+                        if any {
+                            let total_bytes: usize = chunks.iter()
+                                .filter_map(|c| match c { PaneOutputChunk::Bytes{bytes,..}=>Some(bytes.len()), _=>None })
+                                .sum();
+                            if t1 > std::time::Duration::from_millis(5) || last_log.elapsed() > std::time::Duration::from_secs(5) {
+                                tracing::info!("poll_once={:.1}ms chunks={} bytes={}", t1.as_secs_f64()*1000.0, chunks.len(), total_bytes);
+                                last_log = std::time::Instant::now();
+                            }
+                        } else {
                             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                         }
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        tracing::warn!("poll_once error: {:?}", e);
                         let mut state = session_state.lock().await;
                         if let Some(ref mut s) = *state {
                             s.exit_code = Some(0);
