@@ -16,10 +16,12 @@ description: "使用 agent-ops MCP 工具操作远程主机的规范流程"
 
 ### 2. 默认 Pane
 
-**必须使用** `%0`（agent-ops 会话的第一个 pane）。
+**必须使用** `%0`（agent-ops 会话的第一个 pane，pane_id 最小）。
 
-- ✅ 通过 `list_window_panes` 确认实际 pane_id
-- ❌ 不要假设 pane_id，每次都要验证
+- ✅ `list_window_panes` 返回 `[%12, %0]` → 使用 `%0`（pane_id 最小）
+- ✅ `list_window_panes` 返回 `[%0]` → 使用 `%0`
+- ❌ 不要按数组顺序选择，按 pane_id 数字大小选择
+- ❌ 不要假设数组第一个就是 %0，需要找到 pane_id 最小的
 
 ### 3. 操作流程
 
@@ -27,7 +29,15 @@ description: "使用 agent-ops MCP 工具操作远程主机的规范流程"
 session_attach(host, session_name="agent-ops")
 → 如果不存在：session_create(host, session_name="agent-ops")
 → list_window_panes(host, session_name="agent-ops", window_index=0)
-→ 使用返回的第一个 pane_id（通常是 %0）
+→ 找到 pane_id 数字最小的 pane（通常是 %0）
+```
+
+**示例**：
+```json
+// 返回结果
+{"ok":true,"panes":[{"active":false,"pane_id":"%12"},{"active":true,"pane_id":"%0"}]}
+
+// 应该使用 %0（pane_id 最小），不是 %12
 ```
 
 ### 4. 禁止行为
@@ -132,11 +142,20 @@ close_pane(host="tf01", session_name="agent-ops", pane_id="%0")  # ❌ 违反规
 | 等进程退出 | `wait_exit` |
 | 查看信息 | `pane_info` / `window_info` / `list_window_panes` |
 | 多窗格分屏 | `split_pane` + `exec` |
+| 分屏并执行命令 | `split_pane_with`（一步完成分屏+启动命令） |
 | 特殊按键 | `send_keys`（`\x03`=Ctrl-C, `\n`=Enter） |
-| 搜索 | `find_pane_text` |
+| 搜索 | `find_pane_text` / `find_text_all` |
 | 大输出命令 | `collect_until_exit`（比 exec 更高效） |
+| 长命令实时监控 | `stream_pane`（阻塞读，增量返回，替代 capture_pane 轮询） |
 | 等终端稳定 | `wait_stable`（发送命令后待渲染完成再 capture） |
+| 等特定字节序列 | `wait_for_bytes`（匹配 ANSI 序列等原始字节） |
+| 区域截图 | `capture_region`（截取屏幕特定区域） |
 | 多机并发 | `batch_exec` / `batch_upload` / `batch_download` |
+| 端口转发 | `tunnel_create` / `tunnel_list` / `tunnel_close` |
+| 文件传输 | `file_upload` / `file_download` |
+| 批量文件传输 | `batch_upload` / `batch_download` |
+| 部署 bridge | `deploy_bridge`（升级部署，需已运行 bridge） |
+| 查询主机能力 | `host_capabilities`（检查 rmux 特性支持） |
 
 ## 常见场景
 
@@ -173,6 +192,76 @@ batch_exec(hosts=["tf01", "dns-backup"], command="hostname")
 3. capture_pane → 获取结果
 ```
 
+### 实时监控长命令输出（stream_pane）
+```
+# 适用于编译、下载等长时间运行的命令
+1. send_keys("make build\n")
+2. 循环调用 stream_pane(timeout_ms=5000) 直到完成
+   - 首次调用返回当前快照 + 后续输出
+   - 后续调用只返回新增输出
+   - 比 capture_pane 轮询更高效
+```
+
+### 等待终端渲染完成（wait_stable）
+```
+# 适用于命令输出有动画或渐进式渲染的场景
+1. send_keys("command\n")
+2. wait_stable(stable_ms=500, timeout_ms=30000)
+   - 等待输出 500ms 内无变化
+3. capture_pane → 获取完整输出
+```
+
+### 端口转发访问远程服务
+```
+# 访问远程数据库
+1. tunnel_create(host="tf01", local_port=15432, remote_host="127.0.0.1", remote_port=5432)
+   → 返回 tunnel_id
+2. 本地连接 localhost:15432 即可访问远程 PostgreSQL
+3. tunnel_close(tunnel_id) → 关闭隧道
+```
+
+### 分屏并执行命令（split_pane_with）
+```
+# 一步完成分屏 + 启动命令
+split_pane_with(
+  host="tf01",
+  session_name="agent-ops",
+  pane_id="%0",
+  direction="vertical",
+  command="tail -f /var/log/syslog",
+  title="log-monitor"
+)
+→ 返回新 pane_id，命令已在新 pane 中启动
+```
+
+### 收集大输出命令结果（collect_until_exit）
+```
+# 比 exec 更高效，适合大输出命令
+1. spawn_command(host, session_name, pane_id, command="find / -name '*.log'")
+2. collect_until_exit(host, session_name, pane_id, max_bytes=10485760)
+   → 流式收集所有输出直到进程退出
+   → 返回收集的字节和退出信息
+```
+
+### 截取屏幕特定区域（capture_region）
+```
+# 截取状态栏或特定 UI 元素
+capture_region(
+  host="tf01",
+  session_name="agent-ops",
+  pane_id="%0",
+  row=0, col=0, rows=1, cols=80  # 截取第一行
+)
+→ 返回指定区域的文本
+```
+
+### 查询主机能力
+```
+# 检查主机是否支持特定特性
+host_capabilities(host="tf01", check="stream.control")
+→ 返回 ok=true/false
+```
+
 ## 错误处理
 
 | 错误 | 原因 | 解决方案 |
@@ -185,25 +274,133 @@ batch_exec(hosts=["tf01", "dns-backup"], command="hostname")
 | `recv: connection lost` | bridge 重启或网络中断 | 等待后重试 |
 | `pane still active` | spawn/shell_command 时 pane 非空闲 | 先 `close_pane` 或换 pane |
 | `timeout` | 命令执行超时 | 增大 `timeout_ms` 或检查命令是否卡住 |
+| `host not found` | 主机名不在 registry 中 | `host_list` 检查可用主机 |
+
+## 最佳实践
+
+### 性能优化
+- **避免 capture_pane 轮询**：使用 `stream_pane` 或 `wait_for_text` 替代
+- **批量操作**：多台主机用 `batch_exec` 而非循环调用 `exec`
+- **大输出命令**：用 `collect_until_exit` 而非 `exec`（避免多次 capture）
+- **并发控制**：`batch_*` 工具支持 `concurrency` 参数，默认 5
+
+### 安全实践
+- **先查后贴**：`paste_buffer` 前必须 `list_buffers` 检查内容
+- **危险操作需确认**：`close_pane`、`close_window`、`kill_session` 需用户明确同意
+- **保留会话**：默认不清理会话，用户可能需要查看结果或继续操作
+- **验证 pane_id**：每次操作前通过 `list_window_panes` 确认 pane_id
+
+### 错误恢复
+- **连接失败**：等待几秒后重试，可能是临时网络问题
+- **Pane 非空闲**：使用 `respawn_pane(kill=true)` 强制重启，或换用其他 pane
+- **命令超时**：增大 `timeout_ms`，或检查命令是否等待输入
+- **会话丢失**：使用 `session_create` 重建会话
+
+## 高级工具详解
+
+### stream_pane - 实时流式输出
+```
+# 首次调用：建立连接，返回当前快照
+stream_pane(host, session_name, pane_id, timeout_ms=5000)
+
+# 后续调用：复用连接，只返回新增输出
+stream_pane(host, session_name, pane_id, timeout_ms=5000)
+
+# 适用场景：
+# - 编译过程监控
+# - 下载进度跟踪
+# - 长命令实时输出
+```
+
+### tunnel_create - 端口转发
+```
+# 访问远程数据库
+tunnel_create(
+  host="tf01",
+  local_port=15432,
+  remote_host="127.0.0.1",  # 远程主机上的地址
+  remote_port=5432
+)
+# → 本地连接 localhost:15432 即可访问远程 PostgreSQL
+
+# 访问远程 Web 服务
+tunnel_create(
+  host="tf01",
+  local_port=8080,
+  remote_host="api.internal",
+  remote_port=8080
+)
+```
+
+### wait_for_bytes - 等待原始字节
+```
+# 等待 ANSI 转义序列（如光标移动）
+wait_for_bytes(
+  host, session_name, pane_id,
+  bytes="G1sK"  # base64 编码的原始字节
+)
+
+# 与 wait_for_text 的区别：
+# - wait_for_text：匹配可见文本（ANSI 处理后）
+# - wait_for_bytes：匹配原始字节流（包括 ANSI 序列）
+```
+
+### capture_region - 区域截图
+```
+# 截取状态栏
+capture_region(host, session_name, pane_id, row=24, col=0, rows=1, cols=80)
+
+# 截取特定 UI 元素
+capture_region(host, session_name, pane_id, row=5, col=10, rows=3, cols=20)
+
+# 全屏截图（省略坐标）
+capture_region(host, session_name, pane_id)
+```
 
 ## 工具选择
 
 跑命令？
 ├── 会自行退出（ls, cat, grep）→ `exec`
 ├── 不会退出（tail -f, ping）→ `send_keys` + `capture_pane`
-└── 多台主机 → `batch_exec`
+├── 大输出命令（find, du）→ `spawn_command` + `collect_until_exit`
+├── 需要实时监控输出 → `send_keys` + `stream_pane` 循环
+├── 多台主机 → `batch_exec`
+└── 需要分屏并行 → `split_pane_with`
 
 需要输出？
 ├── 立即获取 → `capture_pane`
 ├── 等待特定文本 → `wait_for_text`
 ├── 等待进程退出 → `wait_exit`
-└── 搜索文本 → `find_pane_text`
+├── 等待终端稳定 → `wait_stable`
+├── 等待特定字节序列 → `wait_for_bytes`
+├── 搜索文本 → `find_pane_text` / `find_text_all`
+└── 截取特定区域 → `capture_region`
 
 文件操作？
 ├── 单台上传 → `file_upload`
 ├── 单台下载 → `file_download`
 ├── 批量上传 → `batch_upload`
 └── 批量下载 → `batch_download`
+
+端口转发？
+├── 创建隧道 → `tunnel_create`
+├── 查看隧道 → `tunnel_list`
+└── 关闭隧道 → `tunnel_close`
+
+Pane 管理？
+├── 分屏 → `split_pane`
+├── 分屏并执行 → `split_pane_with`
+├── 关闭 pane → `close_pane`（⚠️ 需用户明确同意）
+├── 重启进程 → `respawn_pane`
+├── 移动 pane → `break_pane` / `join_pane`
+└── 交换 pane → `swap_pane`
+
+Window 管理？
+├── 新建窗口 → `split_window`
+├── 关闭窗口 → `close_window`（⚠️ 需用户明确同意）
+├── 切换窗口 → `select_window`
+├── 调整布局 → `select_layout`
+└── 重命名 → `rename_window`
 
 ## 违反后果
 
