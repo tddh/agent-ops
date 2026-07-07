@@ -82,8 +82,13 @@ async fn connect_to_bridge(
     let quic_tls = quinn::crypto::rustls::QuicClientConfig::try_from(tls_config)
         .map_err(|e| anyhow::anyhow!("QUIC TLS config error: {}", e))?;
 
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_idle_timeout(Some(quinn::IdleTimeout::from(quinn::VarInt::from_u32(0))));
+
     let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
-    endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(quic_tls)));
+    let mut client_config = quinn::ClientConfig::new(Arc::new(quic_tls));
+    client_config.transport_config(Arc::new(transport));
+    endpoint.set_default_client_config(client_config);
 
     let conn = endpoint
         .connect(bridge_addr.parse()?, "rmux-bridge")?
@@ -165,26 +170,11 @@ async fn stdin_to_quic(send: &mut quinn::SendStream) -> Result<()> {
     let mut stdin = tokio::io::stdin();
     let mut buf = [0u8; 4096];
     loop {
-        let n = stdin.read(&mut buf[..1]).await?;
+        let n = stdin.read(&mut buf).await?;
         if n == 0 {
             break;
         }
-        let mut total = n;
-        loop {
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(1),
-                stdin.read(&mut buf[total..]),
-            )
-            .await
-            {
-                Ok(Ok(n)) if n > 0 => total += n,
-                _ => break,
-            }
-            if total >= buf.len() {
-                break;
-            }
-        }
-        send.write_all(&buf[..total]).await?;
+        send.write_all(&buf[..n]).await?;
     }
     Ok(())
 }
