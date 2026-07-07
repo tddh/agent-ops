@@ -188,43 +188,17 @@ pub async fn handle_interactive_data(
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
 
     let output_task = {
-        let pane = pane.clone();
         let session_state = session_state.clone();
         tokio::spawn(async move {
-            let mut last_seen = String::new();
-            loop {
-                tokio::select! {
-                    chunk = output_stream.next() => {
-                        match chunk {
-                            Ok(Some(PaneOutputChunk::Bytes { bytes, .. })) => {
-                                let text = String::from_utf8_lossy(&bytes).to_string();
-                                last_seen.push_str(&text);
-                                if tx.send(bytes).await.is_err() { break; }
-                            }
-                            Ok(Some(PaneOutputChunk::Lag(_))) => {
-                                if let Ok(snapshot) = pane.snapshot().await {
-                                    let current = snapshot.visible_text();
-                                    if current.len() > last_seen.len() {
-                                        let delta = current.as_bytes()[last_seen.len()..].to_vec();
-                                        last_seen = current;
-                                        let _ = tx.send(delta).await;
-                                    }
-                                }
-                            }
-                            Ok(None) | Err(_) => break,
-                            _ => continue,
+            while let Ok(Some(chunk)) = output_stream.next().await {
+                match chunk {
+                    PaneOutputChunk::Bytes { bytes, .. } => {
+                        if tx.send(bytes).await.is_err() {
+                            break;
                         }
                     }
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => {
-                        if let Ok(snapshot) = pane.snapshot().await {
-                            let current = snapshot.visible_text();
-                            if current.len() > last_seen.len() {
-                                let delta = current.as_bytes()[last_seen.len()..].to_vec();
-                                last_seen = current;
-                                let _ = tx.send(delta).await;
-                            }
-                        }
-                    }
+                    PaneOutputChunk::Lag(_) => continue,
+                    _ => continue,
                 }
             }
             let mut state = session_state.lock().await;

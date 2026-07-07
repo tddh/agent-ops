@@ -127,9 +127,6 @@ pub async fn connect(
 
     let scrollback = crate::protocol::read_attached_response(&mut ctrl_recv).await?;
 
-    let (mut data_send, mut data_recv) = conn.open_bi().await?;
-    data_send.write_all(&[0x07]).await?;
-
     enable_raw_mode()?;
 
     if !scrollback.is_empty() {
@@ -137,6 +134,9 @@ pub async fn connect(
         stdout.write_all(&scrollback).await?;
         stdout.flush().await?;
     }
+
+    let (mut data_send, mut data_recv) = conn.open_bi().await?;
+    data_send.write_all(&[0x07]).await?;
 
     let ctrl_send = Arc::new(tokio::sync::Mutex::new(ctrl_send));
 
