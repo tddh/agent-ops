@@ -190,21 +190,35 @@ pub async fn handle_interactive_data(
     let output_task = {
         let session_state = session_state.clone();
         tokio::spawn(async move {
-            while let Ok(Some(chunk)) = output_stream.next().await {
-                match chunk {
-                    PaneOutputChunk::Bytes { bytes, .. } => {
-                        if tx.send(bytes).await.is_err() {
-                            break;
+            loop {
+                match output_stream.poll_once().await {
+                    Ok(chunks) => {
+                        let mut any = false;
+                        for chunk in chunks {
+                            match chunk {
+                                PaneOutputChunk::Bytes { bytes, .. } => {
+                                    any = true;
+                                    if tx.send(bytes).await.is_err() {
+                                        return;
+                                    }
+                                }
+                                PaneOutputChunk::Lag(_) => continue,
+                                _ => continue,
+                            }
+                        }
+                        if !any {
+                            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                         }
                     }
-                    PaneOutputChunk::Lag(_) => continue,
-                    _ => continue,
+                    Err(_) => {
+                        let mut state = session_state.lock().await;
+                        if let Some(ref mut s) = *state {
+                            s.exit_code = Some(0);
+                            s.exit_notify.notify_one();
+                        }
+                        return;
+                    }
                 }
-            }
-            let mut state = session_state.lock().await;
-            if let Some(ref mut s) = *state {
-                s.exit_code = Some(0);
-                s.exit_notify.notify_one();
             }
         })
     };
