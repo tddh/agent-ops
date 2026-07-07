@@ -191,20 +191,39 @@ pub async fn handle_interactive_data(
         let pane = pane.clone();
         let session_state = session_state.clone();
         tokio::spawn(async move {
-            while let Ok(Some(chunk)) = output_stream.next().await {
-                match chunk {
-                    PaneOutputChunk::Bytes { bytes, .. } => {
-                        if tx.send(bytes).await.is_err() {
-                            break;
+            let mut last_snapshot_len = 0usize;
+            loop {
+                tokio::select! {
+                    chunk = output_stream.next() => {
+                        match chunk {
+                            Ok(Some(PaneOutputChunk::Bytes { bytes, .. })) => {
+                                last_snapshot_len = last_snapshot_len.max(bytes.len());
+                                if tx.send(bytes).await.is_err() { break; }
+                            }
+                            Ok(Some(PaneOutputChunk::Lag(_))) => {
+                                if let Ok(snapshot) = pane.snapshot().await {
+                                    let text = snapshot.visible_text().into_bytes();
+                                    if text.len() > last_snapshot_len {
+                                        let delta = text[last_snapshot_len..].to_vec();
+                                        last_snapshot_len = text.len();
+                                        let _ = tx.send(delta).await;
+                                    }
+                                }
+                            }
+                            Ok(None) | Err(_) => break,
+                            _ => continue,
                         }
                     }
-                    PaneOutputChunk::Lag(_) => {
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
                         if let Ok(snapshot) = pane.snapshot().await {
                             let text = snapshot.visible_text().into_bytes();
-                            let _ = tx.send(text).await;
+                            if text.len() > last_snapshot_len {
+                                let delta = text[last_snapshot_len..].to_vec();
+                                last_snapshot_len = text.len();
+                                let _ = tx.send(delta).await;
+                            }
                         }
                     }
-                    _ => continue,
                 }
             }
             let mut state = session_state.lock().await;
