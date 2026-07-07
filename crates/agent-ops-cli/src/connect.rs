@@ -117,14 +117,9 @@ async fn stdin_to_quic(send: &mut quinn::SendStream) -> Result<()> {
 async fn quic_to_stdout(recv: &mut quinn::RecvStream) -> Result<()> {
     let mut stdout = tokio::io::stdout();
     let mut buf = [0u8; 4096];
-    loop {
-        match recv.read(&mut buf).await? {
-            Some(n) => {
-                stdout.write_all(&buf[..n]).await?;
-                stdout.flush().await?;
-            }
-            None => break,
-        }
+    while let Some(n) = recv.read(&mut buf).await? {
+        stdout.write_all(&buf[..n]).await?;
+        stdout.flush().await?;
     }
     Ok(())
 }
@@ -155,14 +150,13 @@ pub async fn list_sessions(config: &HostConfig, ca_cert_path: &str) -> Result<()
     let response = crate::protocol::recv_json_frame(&mut recv).await?;
 
     if let Some(sessions) = response.get("sessions").and_then(|s| s.as_array()) {
-        println!("{:<20} {:<10} {}", "SESSION", "COUNT", "STATUS");
+        println!("{:<20} {:<10} STATUS", "SESSION", "COUNT");
         println!("{}", "-".repeat(50));
         for session in sessions {
             println!(
-                "{:<20} {:<10} {}",
+                "{:<20} {:<10} ok",
                 session["session_name"].as_str().unwrap_or("-"),
                 sessions.len(),
-                "ok",
             );
         }
     }

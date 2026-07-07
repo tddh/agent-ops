@@ -14,7 +14,9 @@ use crate::protocol::ProtocolProxy;
 pub struct InteractiveSession {
     pub session_name: String,
     pub pane_id: String,
+    #[allow(dead_code)]
     pub cols: u16,
+    #[allow(dead_code)]
     pub rows: u16,
     pub exit_code: Option<i32>,
     pub exit_notify: Arc<Notify>,
@@ -173,14 +175,9 @@ pub async fn handle_interactive_data(
         let pane = pane.clone();
         async move {
             let mut buf = [0u8; 4096];
-            loop {
-                match recv.read(&mut buf).await? {
-                    Some(n) => {
-                        let keys = String::from_utf8_lossy(&buf[..n]).into_owned();
-                        pane.send_key(&keys).await?;
-                    }
-                    None => break,
-                }
+            while let Some(n) = recv.read(&mut buf).await? {
+                let keys = String::from_utf8_lossy(&buf[..n]).into_owned();
+                pane.send_key(&keys).await?;
             }
             Ok::<_, anyhow::Error>(())
         }
