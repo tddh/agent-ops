@@ -1,6 +1,7 @@
 mod auth;
 mod config;
 mod files;
+mod interactive;
 mod protocol;
 mod proxy;
 mod tls;
