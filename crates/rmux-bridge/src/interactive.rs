@@ -191,21 +191,22 @@ pub async fn handle_interactive_data(
         let pane = pane.clone();
         let session_state = session_state.clone();
         tokio::spawn(async move {
-            let mut last_snapshot_len = 0usize;
+            let mut last_seen = String::new();
             loop {
                 tokio::select! {
                     chunk = output_stream.next() => {
                         match chunk {
                             Ok(Some(PaneOutputChunk::Bytes { bytes, .. })) => {
-                                last_snapshot_len = last_snapshot_len.max(bytes.len());
+                                let text = String::from_utf8_lossy(&bytes).to_string();
+                                last_seen.push_str(&text);
                                 if tx.send(bytes).await.is_err() { break; }
                             }
                             Ok(Some(PaneOutputChunk::Lag(_))) => {
                                 if let Ok(snapshot) = pane.snapshot().await {
-                                    let text = snapshot.visible_text().into_bytes();
-                                    if text.len() > last_snapshot_len {
-                                        let delta = text[last_snapshot_len..].to_vec();
-                                        last_snapshot_len = text.len();
+                                    let current = snapshot.visible_text();
+                                    if current.len() > last_seen.len() {
+                                        let delta = current.as_bytes()[last_seen.len()..].to_vec();
+                                        last_seen = current;
                                         let _ = tx.send(delta).await;
                                     }
                                 }
@@ -214,12 +215,12 @@ pub async fn handle_interactive_data(
                             _ => continue,
                         }
                     }
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => {
                         if let Ok(snapshot) = pane.snapshot().await {
-                            let text = snapshot.visible_text().into_bytes();
-                            if text.len() > last_snapshot_len {
-                                let delta = text[last_snapshot_len..].to_vec();
-                                last_snapshot_len = text.len();
+                            let current = snapshot.visible_text();
+                            if current.len() > last_seen.len() {
+                                let delta = current.as_bytes()[last_seen.len()..].to_vec();
+                                last_seen = current;
                                 let _ = tx.send(delta).await;
                             }
                         }
