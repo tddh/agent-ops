@@ -185,8 +185,6 @@ pub async fn handle_interactive_data(
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
 
-    // 专用 OS 线程处理 output（WezTerm 模式：阻塞 I/O 在独立线程）
-    // 使用 blocking_send 跨线程推送到 tokio channel（Zellij 模式：有界通道 + backpressure）
     let output_thread = {
         let pane = pane.clone();
         let session_state = session_state.clone();
@@ -205,11 +203,15 @@ pub async fn handle_interactive_data(
                         Ok(chunks) => {
                             for chunk in chunks {
                                 if let PaneOutputChunk::Bytes { bytes, .. } = chunk {
-                                    match tx.try_send(bytes) {
-                                        Ok(()) => {}
-                                        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return,
-                                        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                                            std::thread::sleep(std::time::Duration::from_millis(1));
+                                    let mut b = bytes;
+                                    loop {
+                                        match tx.try_send(b) {
+                                            Ok(()) => break,
+                                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return,
+                                            Err(tokio::sync::mpsc::error::TrySendError::Full(ret)) => {
+                                                b = ret;
+                                                std::thread::sleep(std::time::Duration::from_micros(100));
+                                            }
                                         }
                                     }
                                 }
@@ -229,7 +231,6 @@ pub async fn handle_interactive_data(
         })
     };
 
-    // 主循环：stdin → send_key 在独立 tokio task（Zellij 模式：读写分离）
     let mut input_task = {
         let pane = pane.clone();
         tokio::spawn(async move {
