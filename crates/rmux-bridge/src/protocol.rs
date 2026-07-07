@@ -1776,6 +1776,30 @@ impl ProtocolProxy {
             }),
         }
     }
+
+    // ─── Interactive 模块公开方法 ───
+
+    /// 获取 rmux session 对象（供 interactive 模块使用）
+    pub async fn get_session(&self, name: &str) -> anyhow::Result<rmux_sdk::Session> {
+        let sn = SessionName::new(name).map_err(|e| anyhow::anyhow!("{}", e))?;
+        self.rmux.session(sn).await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
+
+    /// 获取 rmux pane 对象（供 interactive 模块使用）
+    pub async fn get_pane(
+        &self,
+        session_name: &str,
+        pane_id_str: &str,
+    ) -> anyhow::Result<rmux_sdk::Pane> {
+        let pane_id = Self::parse_pane_id(pane_id_str)
+            .ok_or_else(|| anyhow::anyhow!("invalid pane_id: {}", pane_id_str))?;
+        let sn = SessionName::new(session_name)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        self.rmux
+            .get_pane_by_id(&sn, pane_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    }
 }
 
 #[cfg(test)]
