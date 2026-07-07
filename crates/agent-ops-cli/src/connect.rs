@@ -5,23 +5,79 @@ use anyhow::{Context, Result};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[derive(Debug)]
+struct SkipServerVerification;
+
+impl SkipServerVerification {
+    fn new() -> Self {
+        Self
+    }
+}
+
+impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+        ]
+    }
+}
+
 async fn connect_to_bridge(
     bridge_addr: &str,
     bridge_token: &str,
     ca_cert_path: &str,
+    insecure: bool,
 ) -> Result<quinn::Connection> {
-    let ca_pem = std::fs::read(ca_cert_path)
-        .with_context(|| format!("failed to read CA cert: {}", ca_cert_path))?;
+    let tls_config = if insecure {
+        rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(SkipServerVerification::new()))
+            .with_no_client_auth()
+    } else {
+        let ca_pem = std::fs::read(ca_cert_path)
+            .with_context(|| format!("failed to read CA cert: {}", ca_cert_path))?;
 
-    let mut roots = rustls::RootCertStore::empty();
-    for cert in rustls_pemfile::certs(&mut ca_pem.as_slice()) {
-        let cert = cert?;
-        roots.add(cert)?;
-    }
+        let mut roots = rustls::RootCertStore::empty();
+        for cert in rustls_pemfile::certs(&mut ca_pem.as_slice()) {
+            let cert = cert?;
+            roots.add(cert)?;
+        }
 
-    let tls_config = rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+        rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth()
+    };
 
     let quic_tls = quinn::crypto::rustls::QuicClientConfig::try_from(tls_config)
         .map_err(|e| anyhow::anyhow!("QUIC TLS config error: {}", e))?;
@@ -50,11 +106,12 @@ async fn connect_to_bridge(
 pub async fn connect(
     config: &HostConfig,
     ca_cert_path: &str,
+    insecure: bool,
     session_name: &str,
     pane_id: &str,
     readonly: bool,
 ) -> Result<()> {
-    let conn = connect_to_bridge(&config.bridge_addr, &config.bridge_token, ca_cert_path)
+    let conn = connect_to_bridge(&config.bridge_addr, &config.bridge_token, ca_cert_path, insecure)
         .await
         .context("failed to connect to bridge")?;
 
@@ -140,25 +197,37 @@ async fn resize_watcher(
     Ok(())
 }
 
-pub async fn list_sessions(config: &HostConfig, ca_cert_path: &str) -> Result<()> {
-    let conn = connect_to_bridge(&config.bridge_addr, &config.bridge_token, ca_cert_path).await?;
+pub async fn list_sessions(config: &HostConfig, ca_cert_path: &str, insecure: bool) -> Result<()> {
+    let conn = connect_to_bridge(&config.bridge_addr, &config.bridge_token, ca_cert_path, insecure).await?;
     let (mut send, mut recv) = conn.open_bi().await?;
     send.write_all(&[0x01]).await?;
 
-    let request = serde_json::json!({ "type": "session_list" });
+    let request = serde_json::json!({ "type": "list_sessions" });
     crate::protocol::send_json_frame(&mut send, &request).await?;
     let response = crate::protocol::recv_json_frame(&mut recv).await?;
 
+    if response.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = response["error"].as_str().unwrap_or("unknown error");
+        anyhow::bail!("failed to list sessions: {}", err);
+    }
+
     if let Some(sessions) = response.get("sessions").and_then(|s| s.as_array()) {
-        println!("{:<20} {:<10} STATUS", "SESSION", "COUNT");
+        if sessions.is_empty() {
+            println!("No active sessions on {}", config.name);
+            return Ok(());
+        }
+        println!("{:<30} HOST", "SESSION");
         println!("{}", "-".repeat(50));
         for session in sessions {
             println!(
-                "{:<20} {:<10} ok",
+                "{:<30} {}",
                 session["session_name"].as_str().unwrap_or("-"),
-                sessions.len(),
+                config.name,
             );
         }
+        println!("\n{} session(s) on {}", sessions.len(), config.name);
+    } else {
+        println!("No sessions found on {}", config.name);
     }
 
     Ok(())
