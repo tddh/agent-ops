@@ -165,11 +165,26 @@ async fn stdin_to_quic(send: &mut quinn::SendStream) -> Result<()> {
     let mut stdin = tokio::io::stdin();
     let mut buf = [0u8; 4096];
     loop {
-        let n = stdin.read(&mut buf).await?;
+        let n = stdin.read(&mut buf[..1]).await?;
         if n == 0 {
             break;
         }
-        send.write_all(&buf[..n]).await?;
+        let mut total = n;
+        loop {
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(1),
+                stdin.read(&mut buf[total..]),
+            )
+            .await
+            {
+                Ok(Ok(n)) if n > 0 => total += n,
+                _ => break,
+            }
+            if total >= buf.len() {
+                break;
+            }
+        }
+        send.write_all(&buf[..total]).await?;
     }
     Ok(())
 }

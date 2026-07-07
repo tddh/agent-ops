@@ -22,7 +22,7 @@ pub struct InteractiveSession {
     pub exit_notify: Arc<Notify>,
 }
 
-const SCROLLBACK_BUFFER_SIZE: usize = 65531;
+const SCROLLBACK_LINES: usize = 50;
 
 async fn read_u8(recv: &mut RecvStream) -> Result<u8> {
     let mut buf = [0u8; 1];
@@ -80,9 +80,21 @@ pub async fn handle_interactive_control(
     };
 
     let snapshot = pane.snapshot().await?;
-    let scrollback = snapshot.visible_text().into_bytes();
-    let scrollback_len = scrollback.len().min(SCROLLBACK_BUFFER_SIZE);
-    let scrollback = scrollback[scrollback.len().saturating_sub(scrollback_len)..].to_vec();
+    let raw_text = snapshot.visible_text();
+    let lines: Vec<&str> = raw_text.lines().collect();
+    let recent_lines = if lines.len() > SCROLLBACK_LINES {
+        &lines[lines.len() - SCROLLBACK_LINES..]
+    } else {
+        &lines
+    };
+    let mut scrollback = String::new();
+    scrollback.push_str("\r\n\x1b[2m--- scrollback (last 50 lines) ---\x1b[0m\r\n");
+    for line in recent_lines {
+        scrollback.push_str(line);
+        scrollback.push_str("\r\n");
+    }
+    scrollback.push_str("\x1b[2m--- end of scrollback ---\x1b[0m\r\n");
+    let scrollback = scrollback.into_bytes();
 
     pane.resize(TerminalSizeSpec::new(cols, rows)).await?;
 
