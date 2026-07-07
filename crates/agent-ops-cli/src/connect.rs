@@ -90,8 +90,11 @@ async fn connect_to_bridge(
         .await?;
 
     let (mut auth_send, mut auth_recv) = conn.open_bi().await?;
-    let auth_frame = format!("AUTH{}\n{}", bridge_token.len(), bridge_token);
-    auth_send.write_all(auth_frame.as_bytes()).await?;
+    auth_send.write_all(b"AUTH").await?;
+    auth_send
+        .write_all(&(bridge_token.len() as u32).to_le_bytes())
+        .await?;
+    auth_send.write_all(bridge_token.as_bytes()).await?;
     auth_send.finish()?;
 
     let mut response = [0u8; 32];
