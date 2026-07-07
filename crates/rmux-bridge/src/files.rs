@@ -3,6 +3,8 @@ use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_yamux::StreamHandle;
 
+use crate::interactive::InteractiveSession;
+
 const CHUNK_SIZE: usize = 1024 * 1024; // 1 MB pipeline buffer
 
 pub async fn handle_upload_stream(mut stream: StreamHandle) -> Result<()> {
@@ -236,6 +238,7 @@ pub async fn handle_quic_stream(
     send: quinn::SendStream,
     mut recv: quinn::RecvStream,
     protocol_proxy: std::sync::Arc<crate::protocol::ProtocolProxy>,
+    session_state: std::sync::Arc<tokio::sync::Mutex<Option<InteractiveSession>>>,
 ) -> anyhow::Result<()> {
     let mut type_buf = [0u8; 1];
     recv.read_exact(&mut type_buf).await?;
@@ -247,6 +250,17 @@ pub async fn handle_quic_stream(
         0x02 => handle_upload_quic(send, recv).await,
         0x03 => handle_download_quic(send, recv).await,
         0x05 => handle_tunnel_quic(send, recv).await,
+        0x06 => crate::interactive::handle_interactive_control(
+            send,
+            recv,
+            protocol_proxy.clone(),
+            session_state.clone(),
+        )
+        .await,
+        0x07 => crate::interactive::handle_interactive_data(
+            send, recv, protocol_proxy, session_state,
+        )
+        .await,
         t => {
             tracing::warn!("unknown QUIC stream type: 0x{:02x}", t);
             Ok(())
