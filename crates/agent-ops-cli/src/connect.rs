@@ -156,8 +156,9 @@ async fn connect_to_bridge(
     client_config.transport_config(Arc::new(transport));
     endpoint.set_default_client_config(client_config);
 
+    let server_name = bridge_addr.split(':').next().unwrap_or(bridge_addr);
     let conn = endpoint
-        .connect(bridge_addr.parse()?, "rmux-bridge")?
+        .connect(bridge_addr.parse()?, server_name)?
         .await?;
 
     let (mut auth_send, mut auth_recv) = conn.open_bi().await?;
@@ -306,6 +307,44 @@ pub async fn list_sessions(config: &HostConfig, ca_cert_path: &str, insecure: bo
     }
 
     Ok(())
+}
+
+pub async fn find_lowest_pane(
+    config: &HostConfig,
+    ca_cert_path: &str,
+    insecure: bool,
+    session_name: &str,
+) -> Result<String> {
+    let conn = connect_to_bridge(&config.bridge_addr, &config.bridge_token, ca_cert_path, insecure).await?;
+    let (mut send, mut recv) = conn.open_bi().await?;
+    send.write_all(&[0x01]).await?;
+
+    let request = serde_json::json!({
+        "type": "list_window_panes",
+        "session_name": session_name,
+        "window_index": 0,
+    });
+    crate::protocol::send_json_frame(&mut send, &request).await?;
+    let response = crate::protocol::recv_json_frame(&mut recv).await?;
+
+    if !response.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        let err = response["error"].as_str().unwrap_or("unknown error");
+        anyhow::bail!("failed to list panes: {}", err);
+    }
+
+    let panes = response
+        .get("panes")
+        .and_then(|p| p.as_array())
+        .context("no panes in response")?;
+
+    let smallest = panes
+        .iter()
+        .filter_map(|p| p.get("pane_id").and_then(|id| id.as_str()))
+        .filter_map(|id| id.trim_start_matches('%').parse::<u32>().ok())
+        .min()
+        .context("no panes found in session")?;
+
+    Ok(format!("%{}", smallest))
 }
 
 #[cfg(test)]

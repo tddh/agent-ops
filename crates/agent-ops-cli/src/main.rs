@@ -28,8 +28,8 @@ enum Commands {
         #[arg(long, default_value = "agent-ops")]
         session: String,
 
-        #[arg(long, default_value = "%0")]
-        pane: String,
+        #[arg(long)]
+        pane: Option<String>,
 
         #[arg(long)]
         readonly: bool,
@@ -67,6 +67,11 @@ async fn main() -> anyhow::Result<()> {
             readonly,
         } => {
             let config = load_host_config(&cli.hosts_file, &host)?;
+            let pane = match pane {
+                Some(p) => p,
+                None => connect::find_lowest_pane(&config, &cli.ca_cert, cli.insecure, &session)
+                    .await?,
+            };
             connect::connect(&config, &cli.ca_cert, cli.insecure, &session, &pane, readonly).await
         }
         Commands::List { host } => {
