@@ -2,8 +2,74 @@ use std::sync::Arc;
 
 use agent_ops_core::HostConfig;
 use anyhow::{Context, Result};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
+
+#[derive(Debug, PartialEq, Eq)]
+enum TerminalAction {
+    Input(Vec<u8>),
+    Resize(u16, u16),
+    Detach,
+    Ignore,
+}
+
+fn translate_terminal_event(event: Event) -> TerminalAction {
+    match event {
+        Event::Key(key_event) => translate_key_event(key_event),
+        Event::Resize(cols, rows) => TerminalAction::Resize(cols, rows),
+        _ => TerminalAction::Ignore,
+    }
+}
+
+fn translate_key_event(key: KeyEvent) -> TerminalAction {
+    if key.kind == KeyEventKind::Release {
+        return TerminalAction::Ignore;
+    }
+
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+    // Check for Ctrl+\ (both as structured event and raw control character)
+    // Crossterm may send Ctrl+\ as either:
+    // 1. KeyCode::Char('\\') with KeyModifiers::CONTROL
+    // 2. KeyCode::Char('\x1c') as a raw control character (0x1c = 28)
+    if ctrl && key.code == KeyCode::Char('\\') {
+        return TerminalAction::Detach;
+    }
+    if let KeyCode::Char(c) = key.code {
+        if c == '\x1c' {
+            return TerminalAction::Detach;
+        }
+    }
+
+    match key.code {
+        KeyCode::Char(c) => {
+            if ctrl {
+                let byte = (c as u8).wrapping_sub(b'a').wrapping_add(1);
+                TerminalAction::Input(vec![byte])
+            } else {
+                let mut buf = [0u8; 4];
+                let s = c.encode_utf8(&mut buf);
+                TerminalAction::Input(s.as_bytes().to_vec())
+            }
+        }
+        KeyCode::Enter => TerminalAction::Input(vec![b'\r']),
+        KeyCode::Backspace => TerminalAction::Input(vec![0x7f]),
+        KeyCode::Tab => TerminalAction::Input(vec![b'\t']),
+        KeyCode::Esc => TerminalAction::Input(vec![0x1b]),
+        KeyCode::Up => TerminalAction::Input(vec![0x1b, b'[', b'A']),
+        KeyCode::Down => TerminalAction::Input(vec![0x1b, b'[', b'B']),
+        KeyCode::Right => TerminalAction::Input(vec![0x1b, b'[', b'C']),
+        KeyCode::Left => TerminalAction::Input(vec![0x1b, b'[', b'D']),
+        KeyCode::Home => TerminalAction::Input(vec![0x1b, b'[', b'H']),
+        KeyCode::End => TerminalAction::Input(vec![0x1b, b'[', b'F']),
+        KeyCode::PageUp => TerminalAction::Input(vec![0x1b, b'[', b'5', b'~']),
+        KeyCode::PageDown => TerminalAction::Input(vec![0x1b, b'[', b'6', b'~']),
+        KeyCode::Delete => TerminalAction::Input(vec![0x1b, b'[', b'3', b'~']),
+        KeyCode::Insert => TerminalAction::Input(vec![0x1b, b'[', b'2', b'~']),
+        _ => TerminalAction::Ignore,
+    }
+}
 
 #[derive(Debug)]
 struct SkipServerVerification;
@@ -145,17 +211,9 @@ pub async fn connect(
 
     let ctrl_send = Arc::new(tokio::sync::Mutex::new(ctrl_send));
 
-    let result = if readonly {
-        tokio::select! {
-            r = quic_to_stdout(&mut data_recv) => r,
-            r = resize_watcher(ctrl_send.clone()) => r,
-        }
-    } else {
-        tokio::select! {
-            r = stdin_to_quic(&mut data_send) => r,
-            r = quic_to_stdout(&mut data_recv) => r,
-            r = resize_watcher(ctrl_send.clone()) => r,
-        }
+    let result = tokio::select! {
+        r = terminal_event_loop(&mut data_send, ctrl_send.clone(), readonly) => r,
+        r = quic_to_stdout(&mut data_recv) => r,
     };
 
     disable_raw_mode()?;
@@ -166,21 +224,41 @@ pub async fn connect(
     result
 }
 
-/// stdin → QUIC 数据流转发
-/// Ctrl+\ (0x1C) = 本地退出（发送 Detach 后断开，session 继续存活）
-async fn stdin_to_quic(send: &mut quinn::SendStream) -> Result<()> {
-    let mut stdin = tokio::io::stdin();
-    let mut buf = [0u8; 4096];
-    loop {
-        let n = stdin.read(&mut buf).await?;
-        if n == 0 {
-            break;
+/// 终端事件循环：使用 crossterm EventStream 作为唯一输入源
+///
+/// 社区最佳实践：避免混用 tokio::io::stdin() 和 EventStream，
+/// 因为两者会竞争 stdin fd，导致按键丢失或延迟。
+/// 此函数统一处理所有终端事件（按键、Resize、粘贴等），
+/// 通过 translate_terminal_event 转换为协议动作后发送。
+async fn terminal_event_loop(
+    data_send: &mut quinn::SendStream,
+    ctrl_send: Arc<tokio::sync::Mutex<quinn::SendStream>>,
+    readonly: bool,
+) -> Result<()> {
+    use crossterm::event::EventStream;
+    use futures::StreamExt;
+
+    let mut event_stream = EventStream::new();
+
+    while let Some(event_result) = event_stream.next().await {
+        let event = event_result.context("event stream error")?;
+        match translate_terminal_event(event) {
+            TerminalAction::Input(bytes) => {
+                if !readonly {
+                    data_send.write_all(&bytes).await?;
+                }
+            }
+            TerminalAction::Resize(cols, rows) => {
+                let mut send = ctrl_send.lock().await;
+                crate::protocol::write_resize(&mut send, cols, rows).await?;
+            }
+            TerminalAction::Detach => {
+                return Ok(());
+            }
+            TerminalAction::Ignore => {}
         }
-        if buf[..n].contains(&0x1c) {
-            return Ok(());
-        }
-        send.write_all(&buf[..n]).await?;
     }
+
     Ok(())
 }
 
@@ -190,22 +268,6 @@ async fn quic_to_stdout(recv: &mut quinn::RecvStream) -> Result<()> {
     while let Some(n) = recv.read(&mut buf).await? {
         stdout.write_all(&buf[..n]).await?;
         stdout.flush().await?;
-    }
-    Ok(())
-}
-
-async fn resize_watcher(
-    ctrl_send: Arc<tokio::sync::Mutex<quinn::SendStream>>,
-) -> Result<()> {
-    use crossterm::event::{Event, EventStream};
-    use futures::StreamExt;
-
-    let mut reader = EventStream::new();
-    while let Some(event) = reader.next().await {
-        if let Ok(Event::Resize(cols, rows)) = event {
-            let mut send = ctrl_send.lock().await;
-            crate::protocol::write_resize(&mut send, cols, rows).await?;
-        }
     }
     Ok(())
 }
@@ -244,4 +306,66 @@ pub async fn list_sessions(config: &HostConfig, ca_cert_path: &str, insecure: bo
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+
+    fn key_event(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    #[test]
+    fn translates_plain_character_to_input_bytes() {
+        let action = translate_terminal_event(Event::Key(key_event(
+            KeyCode::Char('a'),
+            KeyModifiers::NONE,
+        )));
+
+        assert_eq!(action, TerminalAction::Input(vec![b'a']));
+    }
+
+    #[test]
+    fn translates_enter_to_carriage_return() {
+        let action = translate_terminal_event(Event::Key(key_event(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+
+        assert_eq!(action, TerminalAction::Input(vec![b'\r']));
+    }
+
+    #[test]
+    fn translates_ctrl_backslash_to_detach() {
+        let action = translate_terminal_event(Event::Key(key_event(
+            KeyCode::Char('\\'),
+            KeyModifiers::CONTROL,
+        )));
+
+        assert_eq!(action, TerminalAction::Detach);
+    }
+
+    #[test]
+    fn translates_ctrl_backslash_raw_control_char_to_detach() {
+        let action = translate_terminal_event(Event::Key(key_event(
+            KeyCode::Char('\x1c'),
+            KeyModifiers::NONE,
+        )));
+
+        assert_eq!(action, TerminalAction::Detach);
+    }
+
+    #[test]
+    fn translates_resize_event_to_resize_action() {
+        let action = translate_terminal_event(Event::Resize(120, 40));
+
+        assert_eq!(action, TerminalAction::Resize(120, 40));
+    }
 }
