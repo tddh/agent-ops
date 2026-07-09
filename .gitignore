@@ -41,3 +41,5 @@ docs/project-analysis.md
 # 临时文件
 *.tmp
 *.bak
+.qoder/*
+.qoder

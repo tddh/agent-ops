@@ -941,7 +941,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "deploy_bridge",
-                "description": "Deploy a compiled rmux-bridge binary to multiple remote hosts and restart the service. This is for UPGRADE deployments only — target hosts MUST already have rmux-bridge running (first-time deployments must use deploy/install-bridge.sh via SSH). The deployment process for each host: upload binary → set executable permissions → replace existing binary → restart service via nohup. Supports concurrent deployments with configurable concurrency limit. Returns per-host deployment status. Use this to roll out bridge updates across your infrastructure.",
+                "description": "Deploy a compiled rmux-bridge binary to multiple remote hosts and restart the service. This is for UPGRADE deployments only — target hosts MUST already have rmux-bridge running (first-time deployments must use deploy/install-bridge.sh via SSH). The deployment process for each host: upload binary → replace existing binary → restart service → reconnect to verify. Supports concurrent deployments with configurable concurrency limit. Returns per-host deployment status. Use this to roll out bridge updates across your infrastructure.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {

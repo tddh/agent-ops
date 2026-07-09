@@ -1732,17 +1732,51 @@ async fn deploy_bridge(ctx: &ToolContext, args: Value) -> Result<Value> {
                 }
             }
 
-            let cmd = format!("chmod +x {new} && nohup sh -c 'sleep 1 && mv {new} {path} && systemctl restart rmux-bridge' > /dev/null 2>&1 & echo deployed",
+            // 第一步：替换二进制
+            let replace_cmd = format!("chmod +x {new} && mv {new} {path}",
                 new = upload_new_path, path = remote_path);
-            let result = exec_in_session(&mut stream, session_name, &pane_id,
-                &cmd, 10000, 50).await;
+            let replace_result = exec_in_session(&mut stream, session_name, &pane_id,
+                &replace_cmd, 10000, 50).await;
+            if !replace_result.ok || replace_result.error.is_some() {
+                return (host_name.clone(), json!({
+                    "ok": false, "status": "replace_failed",
+                    "output": replace_result.output,
+                    "exit_code": replace_result.exit_code,
+                    "error": replace_result.error,
+                }));
+            }
+
+            // 第二步：重启 bridge（预期断连）
+            let restart_cmd = "systemctl restart rmux-bridge";
+            let _restart_result = exec_in_session(&mut stream, session_name, &pane_id,
+                restart_cmd, 10000, 50).await;
+            // 断连是预期的，忽略错误
+
+            // 第三步：重连确认新 bridge 启动
+            drop(stream);
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let mut new_stream = match connect_to_bridge_hybrid(
+                &host.bridge_addr, &host.bridge_token,
+                ca_cert.as_deref(), 5, insecure,
+            ).await {
+                Ok(s) => s,
+                Err(e) => return (host_name.clone(), json!({
+                    "ok": false, "status": "reconnect_failed",
+                    "error": format!("bridge did not come back: {:#}", e)
+                })),
+            };
+
+            // 验证新进程运行中
+            let verify_result = exec_in_session(&mut new_stream, session_name, &pane_id,
+                "systemctl is-active rmux-bridge", 10000, 50).await;
+            let is_active = verify_result.output.trim() == "active";
 
             (host_name.clone(), json!({
-                "ok": result.ok && result.error.is_none(),
-                "status": if result.ok && result.error.is_none() { "restarted" } else { "exec_failed" },
-                "output": result.output,
-                "exit_code": result.exit_code,
-                "error": result.error,
+                "ok": is_active,
+                "status": if is_active { "restarted" } else { "verify_failed" },
+                "output": verify_result.output,
+                "exit_code": verify_result.exit_code,
+                "error": if is_active { None } else { Some(format!("bridge not active: {}", verify_result.output.trim())) },
             }))
         }));
     }
