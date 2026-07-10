@@ -71,79 +71,23 @@ fn translate_key_event(key: KeyEvent) -> TerminalAction {
     }
 }
 
-#[derive(Debug)]
-struct SkipServerVerification;
-
-impl SkipServerVerification {
-    fn new() -> Self {
-        Self
-    }
-}
-
-impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::RSA_PSS_SHA256,
-        ]
-    }
-}
-
 async fn connect_to_bridge(
     bridge_addr: &str,
     bridge_token: &str,
     ca_cert_path: &str,
-    insecure: bool,
 ) -> Result<quinn::Connection> {
-    let tls_config = if insecure {
-        rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(SkipServerVerification::new()))
-            .with_no_client_auth()
-    } else {
-        let ca_pem = std::fs::read(ca_cert_path)
-            .with_context(|| format!("failed to read CA cert: {}", ca_cert_path))?;
+    let ca_pem = std::fs::read(ca_cert_path)
+        .with_context(|| format!("failed to read CA cert: {}", ca_cert_path))?;
 
-        let mut roots = rustls::RootCertStore::empty();
-        for cert in rustls_pemfile::certs(&mut ca_pem.as_slice()) {
-            let cert = cert?;
-            roots.add(cert)?;
-        }
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in rustls_pemfile::certs(&mut ca_pem.as_slice()) {
+        let cert = cert?;
+        roots.add(cert)?;
+    }
 
-        rustls::ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth()
-    };
+    let tls_config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
 
     let quic_tls = quinn::crypto::rustls::QuicClientConfig::try_from(tls_config)
         .map_err(|e| anyhow::anyhow!("QUIC TLS config error: {}", e))?;
@@ -181,12 +125,11 @@ async fn connect_to_bridge(
 pub async fn connect(
     config: &HostConfig,
     ca_cert_path: &str,
-    insecure: bool,
     session_name: &str,
     pane_id: &str,
     readonly: bool,
 ) -> Result<()> {
-    let conn = connect_to_bridge(&config.bridge_addr, &config.bridge_token, ca_cert_path, insecure)
+    let conn = connect_to_bridge(&config.bridge_addr, &config.bridge_token, ca_cert_path)
         .await
         .context("failed to connect to bridge")?;
 
@@ -273,8 +216,8 @@ async fn quic_to_stdout(recv: &mut quinn::RecvStream) -> Result<()> {
     Ok(())
 }
 
-pub async fn list_sessions(config: &HostConfig, ca_cert_path: &str, insecure: bool) -> Result<()> {
-    let conn = connect_to_bridge(&config.bridge_addr, &config.bridge_token, ca_cert_path, insecure).await?;
+pub async fn list_sessions(config: &HostConfig, ca_cert_path: &str) -> Result<()> {
+    let conn = connect_to_bridge(&config.bridge_addr, &config.bridge_token, ca_cert_path).await?;
     let (mut send, mut recv) = conn.open_bi().await?;
     send.write_all(&[0x01]).await?;
 
@@ -312,10 +255,9 @@ pub async fn list_sessions(config: &HostConfig, ca_cert_path: &str, insecure: bo
 pub async fn find_lowest_pane(
     config: &HostConfig,
     ca_cert_path: &str,
-    insecure: bool,
     session_name: &str,
 ) -> Result<String> {
-    let conn = connect_to_bridge(&config.bridge_addr, &config.bridge_token, ca_cert_path, insecure).await?;
+    let conn = connect_to_bridge(&config.bridge_addr, &config.bridge_token, ca_cert_path).await?;
     let (mut send, mut recv) = conn.open_bi().await?;
     send.write_all(&[0x01]).await?;
 

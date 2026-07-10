@@ -40,8 +40,7 @@ pub async fn upload_file(
     host: &HostConfig,
     local_path: &str,
     remote_path: &str,
-    ca_cert_path: Option<&str>,
-    insecure: bool,
+    ca_cert_path: &str,
     overwrite: OverwriteMode,
     exclude: &[String],
 ) -> Result<Vec<FileResult>> {
@@ -50,13 +49,13 @@ pub async fn upload_file(
         .with_context(|| format!("failed to access: {}", local_path))?;
 
     if meta.is_dir() {
-        upload_dir(host, local_path, remote_path, ca_cert_path, insecure, overwrite, exclude).await
+        upload_dir(host, local_path, remote_path, ca_cert_path, overwrite, exclude).await
     } else {
         let size = meta.len() as usize;
         if size > MAX_FILE_SIZE {
             bail!("file too large: {} bytes (max {})", size, MAX_FILE_SIZE);
         }
-        let result = upload_single(host, local_path, remote_path, ca_cert_path, insecure, overwrite).await?;
+        let result = upload_single(host, local_path, remote_path, ca_cert_path, overwrite).await?;
         Ok(vec![result])
     }
 }
@@ -65,15 +64,14 @@ async fn upload_single(
     host: &HostConfig,
     local_path: &str,
     remote_path: &str,
-    ca_cert_path: Option<&str>,
-    insecure: bool,
+    ca_cert_path: &str,
     overwrite: OverwriteMode,
 ) -> Result<FileResult> {
     let meta = tokio::fs::metadata(local_path).await?;
     let file_size = meta.len();
 
     let (_conn, _auth_send, _auth_recv) = crate::transport::connect_to_bridge_quic(
-        &host.bridge_addr, &host.bridge_token, ca_cert_path, insecure,
+        &host.bridge_addr, &host.bridge_token, ca_cert_path,
     ).await?;
 
     let (mut send, mut recv) = _conn.open_bi().await?;
@@ -113,8 +111,7 @@ async fn upload_dir(
     host: &HostConfig,
     local_path: &str,
     remote_base: &str,
-    ca_cert_path: Option<&str>,
-    insecure: bool,
+    ca_cert_path: &str,
     overwrite: OverwriteMode,
     exclude: &[String],
 ) -> Result<Vec<FileResult>> {
@@ -124,7 +121,7 @@ async fn upload_dir(
     if files.is_empty() { return Ok(Vec::new()); }
 
     let (conn, _auth_send, _auth_recv) = crate::transport::connect_to_bridge_quic(
-        &host.bridge_addr, &host.bridge_token, ca_cert_path, insecure,
+        &host.bridge_addr, &host.bridge_token, ca_cert_path,
     ).await?;
     let conn = Arc::new(conn);
 
@@ -197,11 +194,10 @@ pub async fn download_file(
     host: &HostConfig,
     remote_path: &str,
     local_path: &str,
-    ca_cert_path: Option<&str>,
-    insecure: bool,
+    ca_cert_path: &str,
 ) -> Result<Vec<FileResult>> {
     let (conn, _auth_send, _auth_recv) = crate::transport::connect_to_bridge_quic(
-        &host.bridge_addr, &host.bridge_token, ca_cert_path, insecure,
+        &host.bridge_addr, &host.bridge_token, ca_cert_path,
     ).await?;
 
     let (mut send, mut recv) = conn.open_bi().await?;

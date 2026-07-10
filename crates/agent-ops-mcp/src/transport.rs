@@ -1,11 +1,8 @@
 //! TLS transport layer for connecting the MCP server to remote rmux-bridge
-//! instances. Supports CA-verified and insecure (skip verification) TLS
-//! handshakes, plus token-based authentication.
+//! instances. Requires CA-verified TLS handshakes and token-based authentication.
 
 use anyhow::{Context, Result};
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use rustls::DigitallySignedStruct;
+use rustls::pki_types::{CertificateDer, ServerName};
 use std::io::BufReader;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -21,15 +18,14 @@ use tokio_rustls::TlsConnector;
 pub async fn connect_to_bridge(
     bridge_addr: &str,
     auth_token: &str,
-    ca_cert_path: Option<&str>,
-    insecure: bool,
+    ca_cert_path: &str,
 ) -> Result<tokio_rustls::client::TlsStream<TcpStream>> {
     let tcp = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(bridge_addr))
         .await
         .context("TCP connect timeout after 5s")?
         .with_context(|| format!("failed to connect to bridge at {}", bridge_addr))?;
 
-    let tls_config = build_tls_client_config(ca_cert_path, insecure)?;
+    let tls_config = build_tls_client_config(ca_cert_path)?;
     let connector = TlsConnector::from(Arc::new(tls_config));
     let hostname = bridge_addr.split(':').next().unwrap_or("localhost");
     let server_name = ServerName::try_from(hostname)?.to_owned();
@@ -58,13 +54,12 @@ pub async fn connect_to_bridge(
 pub async fn connect_to_bridge_with_retry(
     bridge_addr: &str,
     auth_token: &str,
-    ca_cert_path: Option<&str>,
+    ca_cert_path: &str,
     max_retries: u32,
-    insecure: bool,
 ) -> Result<tokio_rustls::client::TlsStream<TcpStream>> {
     let mut attempt = 0;
     loop {
-        match connect_to_bridge(bridge_addr, auth_token, ca_cert_path, insecure).await {
+        match connect_to_bridge(bridge_addr, auth_token, ca_cert_path).await {
             Ok(stream) => return Ok(stream),
             Err(e) if attempt < max_retries => {
                 attempt += 1;
@@ -83,96 +78,28 @@ pub async fn connect_to_bridge_with_retry(
     }
 }
 
-fn build_tls_client_config(
-    ca_cert_path: Option<&str>,
-    insecure: bool,
-) -> Result<rustls::ClientConfig> {
-    if let Some(ca_path) = ca_cert_path {
-        let ca_bytes = std::fs::read(ca_path)
-            .with_context(|| format!("failed to read CA cert: {}", ca_path))?;
-        let mut reader = BufReader::new(ca_bytes.as_slice());
-        let certs: Vec<CertificateDer> = rustls_pemfile::certs(&mut reader)
-            .filter_map(|r| r.ok())
-            .collect();
-        if certs.is_empty() {
-            anyhow::bail!("no valid certificates found in {}", ca_path);
-        }
-
-        let mut root_store = rustls::RootCertStore::empty();
-        for cert in certs {
-            root_store
-                .add(cert)
-                .with_context(|| format!("failed to add CA cert from {}", ca_path))?;
-        }
-        tracing::info!("TLS: verifying bridge certificate against CA: {}", ca_path);
-
-        Ok(rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth())
-    } else if insecure {
-        tracing::warn!(
-            "TLS: --insecure flag set, skipping certificate verification (NOT for production)"
-        );
-
-        Ok(rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(SkipVerification))
-            .with_no_client_auth())
-    } else {
-        anyhow::bail!(
-            "no CA cert provided. Either pass --ca-cert <path> or --insecure (not recommended)"
-        );
-    }
-}
-
-#[derive(Debug)]
-struct SkipVerification;
-
-impl ServerCertVerifier for SkipVerification {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: UnixTime,
-    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
+fn build_tls_client_config(ca_cert_path: &str) -> Result<rustls::ClientConfig> {
+    let ca_bytes = std::fs::read(ca_cert_path)
+        .with_context(|| format!("failed to read CA cert: {}", ca_cert_path))?;
+    let mut reader = BufReader::new(ca_bytes.as_slice());
+    let certs: Vec<CertificateDer> = rustls_pemfile::certs(&mut reader)
+        .filter_map(|r| r.ok())
+        .collect();
+    if certs.is_empty() {
+        anyhow::bail!("no valid certificates found in {}", ca_cert_path);
     }
 
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
+    let mut root_store = rustls::RootCertStore::empty();
+    for cert in certs {
+        root_store
+            .add(cert)
+            .with_context(|| format!("failed to add CA cert from {}", ca_cert_path))?;
     }
+    tracing::info!("TLS: verifying bridge certificate against CA: {}", ca_cert_path);
 
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        use rustls::SignatureScheme::*;
-        vec![
-            RSA_PKCS1_SHA256,
-            RSA_PKCS1_SHA384,
-            RSA_PKCS1_SHA512,
-            ECDSA_NISTP256_SHA256,
-            ECDSA_NISTP384_SHA384,
-            ECDSA_NISTP521_SHA512,
-            RSA_PSS_SHA256,
-            RSA_PSS_SHA384,
-            RSA_PSS_SHA512,
-            ED25519,
-        ]
-    }
+    Ok(rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth())
 }
 
 async fn send_auth_frame(
@@ -199,8 +126,7 @@ async fn send_auth_frame(
 pub async fn connect_to_bridge_quic(
     bridge_addr: &str,
     auth_token: &str,
-    ca_cert_path: Option<&str>,
-    insecure: bool,
+    ca_cert_path: &str,
 ) -> anyhow::Result<(quinn::Connection, quinn::SendStream, quinn::RecvStream)> {
     let addr: std::net::SocketAddr = bridge_addr
         .parse()
@@ -208,7 +134,7 @@ pub async fn connect_to_bridge_quic(
 
     let mut endpoint = quinn::Endpoint::client("[::]:0".parse()?)?;
 
-    let tls_config = build_quic_client_config(ca_cert_path, insecure)?;
+    let tls_config = build_quic_client_config(ca_cert_path)?;
     let mut client_config = quinn::ClientConfig::new(std::sync::Arc::new(
         quinn::crypto::rustls::QuicClientConfig::try_from(std::sync::Arc::new(tls_config))
             .map_err(|e| anyhow::anyhow!("QUIC TLS config error: {e}"))?,
@@ -260,8 +186,7 @@ pub async fn connect_to_bridge_quic(
 pub async fn connect_to_bridge_quic_tunnel(
     bridge_addr: &str,
     auth_token: &str,
-    ca_cert_path: Option<&str>,
-    insecure: bool,
+    ca_cert_path: &str,
 ) -> anyhow::Result<(quinn::Connection, quinn::SendStream, quinn::RecvStream)> {
     let addr: std::net::SocketAddr = bridge_addr
         .parse()
@@ -269,7 +194,7 @@ pub async fn connect_to_bridge_quic_tunnel(
 
     let mut endpoint = quinn::Endpoint::client("[::]:0".parse()?)?;
 
-    let tls_config = build_quic_client_config(ca_cert_path, insecure)?;
+    let tls_config = build_quic_client_config(ca_cert_path)?;
     let mut client_config = quinn::ClientConfig::new(std::sync::Arc::new(
         quinn::crypto::rustls::QuicClientConfig::try_from(std::sync::Arc::new(tls_config))
             .map_err(|e| anyhow::anyhow!("QUIC TLS config error: {e}"))?,
@@ -308,37 +233,25 @@ pub async fn connect_to_bridge_quic_tunnel(
     Ok((conn, send, recv))
 }
 
-fn build_quic_client_config(
-    ca_cert_path: Option<&str>,
-    insecure: bool,
-) -> anyhow::Result<rustls::ClientConfig> {
-    if let Some(ca_path) = ca_cert_path {
-        let ca_bytes = std::fs::read(ca_path)
-            .with_context(|| format!("failed to read CA cert: {}", ca_path))?;
-        let mut reader = BufReader::new(ca_bytes.as_slice());
-        let certs: Vec<CertificateDer> = rustls_pemfile::certs(&mut reader)
-            .filter_map(|r| r.ok())
-            .collect();
-        if certs.is_empty() {
-            anyhow::bail!("no valid certificates found in {}", ca_path);
-        }
-        let mut root_store = rustls::RootCertStore::empty();
-        for cert in certs {
-            root_store
-                .add(cert)
-                .with_context(|| format!("failed to add CA cert from {}", ca_path))?;
-        }
-        Ok(rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth())
-    } else if insecure {
-        Ok(rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(std::sync::Arc::new(SkipVerification))
-            .with_no_client_auth())
-    } else {
-        anyhow::bail!("no CA cert provided")
+fn build_quic_client_config(ca_cert_path: &str) -> anyhow::Result<rustls::ClientConfig> {
+    let ca_bytes = std::fs::read(ca_cert_path)
+        .with_context(|| format!("failed to read CA cert: {}", ca_cert_path))?;
+    let mut reader = BufReader::new(ca_bytes.as_slice());
+    let certs: Vec<CertificateDer> = rustls_pemfile::certs(&mut reader)
+        .filter_map(|r| r.ok())
+        .collect();
+    if certs.is_empty() {
+        anyhow::bail!("no valid certificates found in {}", ca_cert_path);
     }
+    let mut root_store = rustls::RootCertStore::empty();
+    for cert in certs {
+        root_store
+            .add(cert)
+            .with_context(|| format!("failed to add CA cert from {}", ca_cert_path))?;
+    }
+    Ok(rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth())
 }
 
 async fn send_auth_frame_quic(send: &mut quinn::SendStream, token: &str) -> anyhow::Result<()> {
@@ -423,12 +336,11 @@ impl AsyncWrite for BridgeStream {
 pub async fn connect_to_bridge_hybrid(
     bridge_addr: &str,
     auth_token: &str,
-    ca_cert_path: Option<&str>,
+    ca_cert_path: &str,
     max_retries: u32,
-    insecure: bool,
 ) -> Result<BridgeStream> {
     // Try QUIC first
-    match connect_to_bridge_quic(bridge_addr, auth_token, ca_cert_path, insecure).await {
+    match connect_to_bridge_quic(bridge_addr, auth_token, ca_cert_path).await {
         Ok((conn, send, recv)) => {
             tracing::info!("connected via QUIC to {}", bridge_addr);
             return Ok(BridgeStream::Quic { conn, send, recv });
@@ -441,7 +353,7 @@ pub async fn connect_to_bridge_hybrid(
     // Fall back to TCP/TLS with retry
     let mut attempt = 0;
     loop {
-        match connect_to_bridge(bridge_addr, auth_token, ca_cert_path, insecure).await {
+        match connect_to_bridge(bridge_addr, auth_token, ca_cert_path).await {
             Ok(stream) => {
                 tracing::info!("connected via TCP/TLS to {}", bridge_addr);
                 return Ok(BridgeStream::Tcp(Box::new(stream)));
@@ -484,8 +396,7 @@ pub async fn recv_json_frame<S: tokio::io::AsyncReadExt + Unpin>(stream: &mut S)
 pub async fn connect_to_bridge_quic_stream(
     bridge_addr: &str,
     auth_token: &str,
-    ca_cert_path: Option<&str>,
-    insecure: bool,
+    ca_cert_path: &str,
     idle_timeout_secs: u64,
     keepalive_secs: u64,
 ) -> anyhow::Result<(quinn::Connection, quinn::SendStream, quinn::RecvStream)> {
@@ -495,7 +406,7 @@ pub async fn connect_to_bridge_quic_stream(
 
     let mut endpoint = quinn::Endpoint::client("[::]:0".parse()?)?;
 
-    let tls_config = build_quic_client_config(ca_cert_path, insecure)?;
+    let tls_config = build_quic_client_config(ca_cert_path)?;
     let mut client_config = quinn::ClientConfig::new(std::sync::Arc::new(
         quinn::crypto::rustls::QuicClientConfig::try_from(std::sync::Arc::new(tls_config))
             .map_err(|e| anyhow::anyhow!("QUIC TLS config error: {e}"))?,
@@ -544,14 +455,13 @@ pub async fn connect_to_bridge_quic_stream(
 pub async fn connect_to_bridge_hybrid_stream(
     bridge_addr: &str,
     auth_token: &str,
-    ca_cert_path: Option<&str>,
+    ca_cert_path: &str,
     max_retries: u32,
-    insecure: bool,
     idle_timeout_secs: u64,
     keepalive_secs: u64,
 ) -> Result<BridgeStream> {
     match connect_to_bridge_quic_stream(
-        bridge_addr, auth_token, ca_cert_path, insecure,
+        bridge_addr, auth_token, ca_cert_path,
         idle_timeout_secs, keepalive_secs,
     )
     .await
@@ -567,7 +477,7 @@ pub async fn connect_to_bridge_hybrid_stream(
 
     let mut attempt = 0;
     loop {
-        match connect_to_bridge(bridge_addr, auth_token, ca_cert_path, insecure).await {
+        match connect_to_bridge(bridge_addr, auth_token, ca_cert_path).await {
             Ok(stream) => {
                 tracing::info!("connected via TCP/TLS stream to {}", bridge_addr);
                 return Ok(BridgeStream::Tcp(Box::new(stream)));

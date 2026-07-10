@@ -22,10 +22,7 @@ struct Cli {
     hosts_file: PathBuf,
 
     #[arg(long)]
-    ca_cert: Option<String>,
-
-    #[arg(long)]
-    insecure: bool,
+    ca_cert: String,
 
     #[arg(long)]
     audit_db: Option<PathBuf>,
@@ -89,7 +86,6 @@ async fn main() -> anyhow::Result<()> {
     let ctx = Arc::new(tools::ToolContext {
         router,
         ca_cert_path: cli.ca_cert,
-        insecure: cli.insecure,
         audit_db,
         agent_name: std::sync::Mutex::new("unknown".to_string()),
         tunnel_manager: Arc::new(tunnel::TunnelManager::new()),

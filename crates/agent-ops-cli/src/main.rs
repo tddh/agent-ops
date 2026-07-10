@@ -15,9 +15,6 @@ struct Cli {
 
     #[arg(long, default_value = "config/ca.crt")]
     ca_cert: String,
-
-    #[arg(long)]
-    insecure: bool,
 }
 
 #[derive(Subcommand)]
@@ -69,14 +66,14 @@ async fn main() -> anyhow::Result<()> {
             let config = load_host_config(&cli.hosts_file, &host)?;
             let pane = match pane {
                 Some(p) => p,
-                None => connect::find_lowest_pane(&config, &cli.ca_cert, cli.insecure, &session)
+                None => connect::find_lowest_pane(&config, &cli.ca_cert, &session)
                     .await?,
             };
-            connect::connect(&config, &cli.ca_cert, cli.insecure, &session, &pane, readonly).await
+            connect::connect(&config, &cli.ca_cert, &session, &pane, readonly).await
         }
         Commands::List { host } => {
             let config = load_host_config(&cli.hosts_file, &host)?;
-            connect::list_sessions(&config, &cli.ca_cert, cli.insecure).await
+            connect::list_sessions(&config, &cli.ca_cert).await
         }
     }
 }

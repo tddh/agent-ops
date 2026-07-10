@@ -73,8 +73,7 @@ impl StreamManager {
         session_name: &str,
         pane_id: &str,
         timeout_ms: u64,
-        ca_cert_path: Option<&str>,
-        insecure: bool,
+        ca_cert_path: &str,
     ) -> anyhow::Result<serde_json::Value> {
         let key = format!("{}:{}:{}", host.name, session_name, pane_id);
 
@@ -93,7 +92,6 @@ impl StreamManager {
                 &host.bridge_token,
                 ca_cert_path,
                 3,
-                insecure,
                 DEFAULT_IDLE_TIMEOUT_SECS,
                 DEFAULT_KEEPALIVE_SECS,
             )

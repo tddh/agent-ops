@@ -67,8 +67,7 @@ impl TunnelManager {
         local_port: u16,
         remote_host: String,
         remote_port: u16,
-        ca_cert_path: Option<&str>,
-        insecure: bool,
+        ca_cert_path: &str,
     ) -> Result<TunnelInfo> {
         if remote_host.len() > MAX_HOST_LEN {
             anyhow::bail!("remote host too long: {} (max {})", remote_host.len(), MAX_HOST_LEN);
@@ -84,7 +83,6 @@ impl TunnelManager {
             &host.bridge_addr,
             &host.bridge_token,
             ca_cert_path,
-            insecure,
         )
         .await
         .with_context(|| "failed to connect to bridge")?;
