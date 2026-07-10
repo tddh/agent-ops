@@ -2,22 +2,26 @@
 //!
 //! 参考：docs/connect-design.md
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use quinn::{RecvStream, SendStream};
-use rmux_sdk::{PaneOutputChunk, TerminalSizeSpec};
+use rmux_sdk::TerminalSizeSpec;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::sync::Arc;
+use tokio::io::unix::AsyncFd;
 use tokio::sync::{Mutex, Notify};
 
 use crate::protocol::ProtocolProxy;
 
-/// 交互式会话状态（在控制流和数据流之间共享）
+/// Interactive session state shared between control (0x06) and data (0x07) streams.
 pub struct InteractiveSession {
     pub session_name: String,
+    #[allow(dead_code)]
     pub pane_id: String,
-    #[allow(dead_code)]
     pub cols: u16,
-    #[allow(dead_code)]
     pub rows: u16,
+    pub socket_path: String,
+    pub master_fd: Option<OwnedFd>,
+    pub child_pid: Option<u32>,
     pub exit_code: Option<i32>,
     pub exit_notify: Arc<Notify>,
 }
@@ -106,6 +110,9 @@ pub async fn handle_interactive_control(
             pane_id: pane_id.clone(),
             cols,
             rows,
+            socket_path: proxy.socket_path().to_string(),
+            master_fd: None,
+            child_pid: None,
             exit_code: None,
             exit_notify: exit_notify.clone(),
         });
@@ -144,12 +151,33 @@ pub async fn handle_interactive_control(
             0x02 => {
                 let new_cols = u16::from_le_bytes([payload[0], payload[1]]);
                 let new_rows = u16::from_le_bytes([payload[2], payload[3]]);
+                
+                let state = session_state.lock().await;
+                if let Some(ref master_fd) = state.as_ref().and_then(|s| s.master_fd.as_ref()) {
+                    let winsize = libc::winsize {
+                        ws_row: new_rows,
+                        ws_col: new_cols,
+                        ws_xpixel: 0,
+                        ws_ypixel: 0,
+                    };
+                    unsafe {
+                        libc::ioctl(master_fd.as_raw_fd(), libc::TIOCSWINSZ, &winsize);
+                    }
+                    tracing::debug!("resize PTY: {}x{}", new_cols, new_rows);
+                }
+                
                 pane.resize(TerminalSizeSpec::new(new_cols, new_rows))
                     .await?;
-                tracing::debug!("resize: {}x{}", new_cols, new_rows);
             }
             0x03 => {
                 tracing::info!("client detached from {}/{}", session_name, pane_id);
+                let state = session_state.lock().await;
+                if let Some(pid) = state.as_ref().and_then(|s| s.child_pid) {
+                    unsafe {
+                        libc::kill(pid as i32, libc::SIGTERM);
+                    }
+                    tracing::info!("sent SIGTERM to child pid {}", pid);
+                }
                 break;
             }
             _ => {
@@ -164,15 +192,18 @@ pub async fn handle_interactive_control(
 pub async fn handle_interactive_data(
     mut send: SendStream,
     mut recv: RecvStream,
-    proxy: Arc<ProtocolProxy>,
+    _proxy: Arc<ProtocolProxy>,
     session_state: Arc<Mutex<Option<InteractiveSession>>>,
 ) -> Result<()> {
-    let (session_name, pane_id) = {
+    let (session_name, socket_path) = {
         let start = std::time::Instant::now();
         let timeout = std::time::Duration::from_secs(30);
         loop {
             if let Some(info) = session_state.lock().await.as_ref() {
-                break (info.session_name.clone(), info.pane_id.clone());
+                break (
+                    info.session_name.clone(),
+                    info.socket_path.clone(),
+                );
             }
             if start.elapsed() > timeout {
                 anyhow::bail!("timeout waiting for control stream (0x06) to attach");
@@ -181,83 +212,182 @@ pub async fn handle_interactive_data(
         }
     };
 
-    let pane = proxy.get_pane(&session_name, &pane_id).await?;
+    let mut master: libc::c_int = -1;
+    let mut slave: libc::c_int = -1;
+    let ret = unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if ret != 0 {
+        anyhow::bail!("openpty failed: {}", std::io::Error::last_os_error());
+    }
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
-
-    let output_thread = {
-        let pane = pane.clone();
-        let session_state = session_state.clone();
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("output thread runtime");
-            rt.block_on(async move {
-                let mut output_stream = match pane.output_stream().await {
-                    Ok(s) => s,
-                    Err(_) => return,
-                };
-                loop {
-                    match output_stream.poll_once().await {
-                        Ok(chunks) => {
-                            for chunk in chunks {
-                                if let PaneOutputChunk::Bytes { bytes, .. } = chunk {
-                                    let mut b = bytes;
-                                    loop {
-                                        match tx.try_send(b) {
-                                            Ok(()) => break,
-                                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return,
-                                            Err(tokio::sync::mpsc::error::TrySendError::Full(ret)) => {
-                                                b = ret;
-                                                std::thread::sleep(std::time::Duration::from_micros(100));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            let mut state = session_state.blocking_lock();
-                            if let Some(ref mut s) = *state {
-                                s.exit_code = Some(0);
-                                s.exit_notify.notify_one();
-                            }
-                            return;
-                        }
-                    }
-                }
-            });
-        })
+    let (cols, rows) = {
+        let state = session_state.lock().await;
+        let info = state.as_ref().context("session state missing")?;
+        (info.cols, info.rows)
     };
 
-    let mut input_task = {
-        let pane = pane.clone();
-        tokio::spawn(async move {
-            let mut buf = [0u8; 4096];
-            while let Some(n) = recv.read(&mut buf).await? {
-                let keys = String::from_utf8_lossy(&buf[..n]).into_owned();
-                pane.send_key(&keys).await?;
-            }
-            Ok::<_, anyhow::Error>(())
-        })
+    let winsize = libc::winsize {
+        ws_row: rows,
+        ws_col: cols,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
     };
+    unsafe {
+        libc::ioctl(master, libc::TIOCSWINSZ, &winsize);
+    }
 
-    loop {
-        tokio::select! {
-            maybe_bytes = rx.recv() => {
-                match maybe_bytes {
-                    Some(bytes) => { send.write_all(&bytes).await?; }
-                    None => break,
-                }
-            }
-            _ = &mut input_task => {
-                break;
-            }
+    let master_fd = unsafe { OwnedFd::from_raw_fd(master) };
+    
+    {
+        let mut state = session_state.lock().await;
+        if let Some(ref mut s) = *state {
+            s.master_fd = Some(master_fd.try_clone()?);
         }
     }
 
-    output_thread.join().ok();
+    let slave_fd = unsafe { OwnedFd::from_raw_fd(slave) };
+    let slave_stdin = slave_fd.try_clone()?;
+    let slave_stdout = slave_fd.try_clone()?;
+    let slave_stderr = slave_fd;
+
+    let mut child = tokio::process::Command::new("rmux")
+        .args(["-S", &socket_path, "attach-session", "-t", &session_name])
+        .env("TERM", "xterm-256color")
+        .env("COLUMNS", cols.to_string())
+        .env("LINES", rows.to_string())
+        .stdin(std::process::Stdio::from(slave_stdin))
+        .stdout(std::process::Stdio::from(slave_stdout))
+        .stderr(std::process::Stdio::from(slave_stderr))
+        .spawn()
+        .context("failed to spawn rmux attach-session")?;
+
+    let child_pid = child.id();
+    tracing::info!(
+        session = %session_name,
+        socket = %socket_path,
+        size = %format!("{}x{}", cols, rows),
+        pid = child_pid.unwrap_or(0),
+        "spawned rmux attach-session via PTY"
+    );
+
+    {
+        let mut state = session_state.lock().await;
+        if let Some(ref mut s) = *state {
+            s.child_pid = child_pid;
+        }
+    }
+
+    let flags = unsafe { libc::fcntl(master_fd.as_raw_fd(), libc::F_GETFL) };
+    if flags == -1 {
+        anyhow::bail!("fcntl F_GETFL failed: {}", std::io::Error::last_os_error());
+    }
+    let ret = unsafe { libc::fcntl(master_fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) };
+    if ret == -1 {
+        anyhow::bail!("fcntl F_SETFL failed: {}", std::io::Error::last_os_error());
+    }
+
+    let async_fd = AsyncFd::new(master_fd).context("failed to create AsyncFd for PTY")?;
+
+    let quic_to_pty = async {
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = recv.read(&mut buf).await?.unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            
+            let mut written = 0;
+            while written < n {
+                let mut guard = async_fd.writable().await?;
+                match guard.try_io(|inner| {
+                    let fd = inner.get_ref().as_raw_fd();
+                    let ret = unsafe {
+                        libc::write(
+                            fd,
+                            buf[written..].as_ptr() as *const libc::c_void,
+                            (n - written) as libc::size_t,
+                        )
+                    };
+                    if ret < 0 {
+                        Err(std::io::Error::last_os_error())
+                    } else {
+                        Ok(ret as usize)
+                    }
+                }) {
+                    Ok(Ok(w)) => written += w,
+                    Ok(Err(e)) => return Err(e.into()),
+                    Err(_would_block) => continue,
+                }
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    };
+
+    let pty_to_quic = async {
+        let mut buf = [0u8; 4096];
+        loop {
+            let mut guard = async_fd.readable().await?;
+            let result = guard.try_io(|inner| {
+                let fd = inner.get_ref().as_raw_fd();
+                let ret = unsafe {
+                    libc::read(
+                        fd,
+                        buf.as_mut_ptr() as *mut libc::c_void,
+                        buf.len() as libc::size_t,
+                    )
+                };
+                if ret < 0 {
+                    Err(std::io::Error::last_os_error())
+                } else {
+                    Ok(ret as usize)
+                }
+            });
+            
+            match result {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => {
+                    send.write_all(&buf[..n]).await?;
+                }
+                Ok(Err(e)) => return Err(e.into()),
+                Err(_would_block) => continue,
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    };
+
+    let copy_result = tokio::select! {
+        r = quic_to_pty => {
+            tracing::info!("QUIC→PTY finished: {:?}", r);
+            r
+        }
+        r = pty_to_quic => {
+            tracing::info!("PTY→QUIC finished: {:?}", r);
+            r
+        }
+    };
+
+    let status = child.wait().await?;
+    let code = status.code().unwrap_or(-1);
+    tracing::info!(exit_code = code, "rmux attach-session exited");
+
+    {
+        let mut state = session_state.lock().await;
+        if let Some(ref mut s) = *state {
+            s.exit_code = Some(code);
+            s.master_fd = None;
+            s.child_pid = None;
+            s.exit_notify.notify_one();
+        }
+    }
+
+    copy_result?;
     Ok(())
 }
 

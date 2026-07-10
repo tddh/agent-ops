@@ -26,3 +26,4 @@ futures.workspace = true
 quinn.workspace = true
 tokio-yamux = "0.3"
 base64 = "0.22"
+libc = "0.2"

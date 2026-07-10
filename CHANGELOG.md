@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Added
+- **交互式终端直连**：新增 `agent-ops-cli` crate，提供 `agent-ops connect` CLI 命令
+  - PTY + `rmux attach-session` 子进程透传方案，完美支持 vim/htop 等 TUI 程序
+  - QUIC 双流协议（0x06 控制 + 0x07 数据），控制面与数据面分离
+  - crossterm raw mode 终端转发，支持 resize/detach
 - 部署脚本拆分：`install-daemon.sh`（rmux daemon）+ `install-bridge.sh`（rmux-bridge），职责独立
 - `/etc/profile.d/agent-ops.sh`：自动设置 `RMUX_TMPDIR` 环境变量，用户登录后可直接 `rmux a -t agent-ops`
 - Bridge 请求级别日志：INFO 显示请求摘要（type/session/duration），DEBUG 显示完整请求/响应 JSON
@@ -12,6 +16,9 @@
   - 1 小时空闲超时 + 15 秒 keepalive，适合长连接场景
   - 64KB 缓冲区，支持 TCP 半关闭处理
   - 完整审计日志记录
+
+### Removed
+- `--insecure` 参数完全禁用，`--ca-cert` 改为必填（H-03 高危安全风险：消除 MITM 攻击面）
 
 ### Changed
 - **rmux-sdk 从 0.7 升级到 0.8**（wire protocol v3，需同步升级 daemon）

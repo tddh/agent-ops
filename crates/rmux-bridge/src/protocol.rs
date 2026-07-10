@@ -28,6 +28,7 @@ pub struct PaneOutputStream {
 /// protocol message type used by the MCP server.
 pub struct ProtocolProxy {
     rmux: rmux_sdk::Rmux,
+    socket_path: String,
 }
 
 impl ProtocolProxy {
@@ -37,7 +38,15 @@ impl ProtocolProxy {
             .unix_socket(socket_path)
             .connect()
             .await?;
-        Ok(Self { rmux })
+        Ok(Self {
+            rmux,
+            socket_path: socket_path.to_string(),
+        })
+    }
+
+    /// Returns the Unix socket path used to connect to the RMUX daemon.
+    pub fn socket_path(&self) -> &str {
+        &self.socket_path
     }
 
     fn parse_pane_id(raw: &str) -> Option<PaneId> {

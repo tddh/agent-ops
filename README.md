@@ -43,6 +43,7 @@ graph LR
 
 | Feature | Description |
 |---------|-------------|
+| **Interactive terminal** | `agent-ops connect` CLI command — PTY-passthrough to remote rmux sessions, supports vim/htop/TUI |
 | **Session management** | Create/destroy/list sessions, multi-pane splits, window layouts |
 | **Command execution** | `exec` one-shot execution (sentinel detection + exit code), interactive programs via send_keys + capture_pane |
 | **Output waiting** | `wait_for_text` for terminal text, `wait_exit` for process exit |
@@ -116,8 +117,7 @@ Edit `~/.config/opencode/opencode.json` (see `config/mcp-config.example.json`):
 | Mode | Trigger | Level |
 |------|---------|:---:|
 | CA verified | `--ca-cert /path/to/ca.crt` | ✅ Server identity verified, MITM-resistant |
-| Skip verify | `--insecure` flag | ⚠️ Encrypted but identity not verified (debug only) |
-| Reject | Neither CA nor --insecure | 🔒 Default |
+| Reject | No CA provided | 🔒 Default |
 
 **Production**: Run your own CA, issue per-bridge certificates, MCP server holds only the CA root.
 

@@ -150,8 +150,7 @@ ssh root@<your-bridge-ip> "systemctl status rmux-bridge --no-pager"
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--hosts-file` | `config/hosts.yaml` | 主机注册表路径 |
-| `--ca-cert` | 无 | CA 证书路径（不传则拒绝连接） |
-| `--insecure` | 无 | 跳过 TLS 证书验证（仅调试） |
+| `--ca-cert` | 无 | CA 证书路径（必填，不传则拒绝连接） |
 | `--audit-db` | `~/.agent-ops/audit.db` | 审计数据库路径 |
 | `--audit-retention-days` | `90` | 审计数据保留天数 |
 | `--audit-max-size-mb` | `500` | 审计数据库大小上限 (MB) |
@@ -217,7 +216,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"host_list"
   | target/release/agent-ops-mcp --hosts-file config/hosts.test.yaml --ca-cert /tmp/bridge-remote.crt 2>/dev/null
 ```
 
-信任首次连接：将远程 bridge 的 `bridge.crt` 复制到本地，通过 `--ca-cert` 参数指定。自签名证书 `SkipVerification` 模式也通过代码硬编码支持（调试用，不建议生产）。
+信任首次连接：将远程 bridge 的 `bridge.crt` 复制到本地，通过 `--ca-cert` 参数指定。
 
 ## 运维
 
@@ -277,7 +276,7 @@ agent-ops-mcp audit cleanup --older-than 30
 |------|------|
 | MCP 工具返回 `connection refused` | `systemctl status rmux-bridge`，确认 bridge 在运行 |
 | `authentication failed` | 检查 `bridge.env` 中的 `BRIDGE_AUTH_TOKEN` 与 `hosts.yaml` 中 `bridge_token` 是否一致 |
-| TLS 握手失败 | `--ca-cert` 指向的证书是否与 bridge 端一致；或确认代码中启用了 `SkipVerification` |
+| TLS 握手失败 | `--ca-cert` 指向的证书是否与 bridge 端一致 |
 | `unknown request type` | bridge 版本过旧，重新交叉编译部署 |
 | RMUX socket 找不到 | `ls $HOME/.rmux/rmux-*/default`，确认 rmux daemon 在运行（socket 路径由 `RMUX_TMPDIR` 环境变量控制，项目 daemon service 配置为 `$HOME/.rmux`，部署脚本自动检测实际路径） |
 
@@ -296,13 +295,14 @@ rmux daemon 的 socket 路径由 `RMUX_TMPDIR` 环境变量控制。项目定制
 
 ### TLS 安全模式
 
-有三种模式：
+只有一种模式：
 
 | 模式 | 触发条件 | 安全等级 |
 |------|---------|:---:|
 | CA 验证 | `--ca-cert /path/to/ca.crt` | ✅ 验证服务器身份，防中间人 |
-| 跳过验证 | `--insecure` flag | ⚠️ 加密但不验证身份（仅调试用） |
-| 拒绝连接 | 既无 CA 又无 --insecure | 🔒 默认行为 |
+| 拒绝连接 | 未提供 CA | 🔒 默认行为 |
+
+> `--insecure` 参数已移除（commit 4dc02183），不再支持跳过 TLS 证书验证。
 
 ### 自签名证书
 
