@@ -4,6 +4,7 @@ mod files;
 mod interactive;
 mod protocol;
 mod proxy;
+mod terminal_state;
 mod tls;
 
 use clap::Parser;

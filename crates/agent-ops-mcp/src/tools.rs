@@ -492,6 +492,8 @@ struct ExecResult {
     exit_code: Option<i32>,
     duration_ms: u64,
     error: Option<String>,
+    terminal_state: Option<serde_json::Value>,
+    cursor: Option<serde_json::Value>,
 }
 
 /// 在已有 session + pane 中执行一次性命令并等待结果。
@@ -525,6 +527,7 @@ where
         return ExecResult {
             ok: false, output: String::new(), exit_code: None,
             duration_ms: 0, error: Some(format!("send_keys: {e}")),
+            terminal_state: None, cursor: None,
         };
     }
 
@@ -533,6 +536,7 @@ where
         Err(e) => return ExecResult {
             ok: false, output: String::new(), exit_code: None,
             duration_ms: 0, error: Some(format!("send_keys: {e}")),
+            terminal_state: None, cursor: None,
         },
     };
 
@@ -541,12 +545,15 @@ where
         return ExecResult {
             ok: false, output: String::new(), exit_code: None,
             duration_ms: 0, error: Some(err),
+            terminal_state: None, cursor: None,
         };
     }
 
     let start = std::time::Instant::now();
     let deadline = start + std::time::Duration::from_millis(timeout_ms);
     let mut last_text = String::new();
+    let mut last_terminal_state: Option<serde_json::Value> = None;
+    let mut last_cursor: Option<serde_json::Value> = None;
     let mut poll_interval = std::time::Duration::from_millis(50);
 
     loop {
@@ -560,6 +567,7 @@ where
                 ok: false, output: last_text, exit_code: None,
                 duration_ms: start.elapsed().as_millis() as u64,
                 error: Some(format!("capture_pane: {e}")),
+                terminal_state: last_terminal_state, cursor: last_cursor,
             };
         }
         let resp = match recv_json_frame(stream).await {
@@ -568,9 +576,12 @@ where
                 ok: false, output: last_text, exit_code: None,
                 duration_ms: start.elapsed().as_millis() as u64,
                 error: Some(format!("recv: {e}")),
+                terminal_state: last_terminal_state, cursor: last_cursor,
             },
         };
         last_text = resp["text"].as_str().unwrap_or("").to_string();
+        last_terminal_state = resp.get("terminal_state").cloned();
+        last_cursor = resp.get("cursor").cloned();
 
         if let Some(pos) = last_text.find(&sentinel_marker) {
             let after_sentinel = &last_text[pos + sentinel_marker.len()..];
@@ -618,6 +629,7 @@ where
                 exit_code,
                 duration_ms,
                 error: None,
+                terminal_state: last_terminal_state, cursor: last_cursor,
             };
         }
 
@@ -629,6 +641,7 @@ where
                 exit_code: None,
                 duration_ms,
                 error: Some(format!("timeout waiting for sentinel after {}ms", timeout_ms)),
+                terminal_state: last_terminal_state, cursor: last_cursor,
             };
         }
 
@@ -667,13 +680,20 @@ async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
     audit(ctx, AuditAction::Exec, host_name, session_name, Some(pane_id), command,
         Some(&output_summary), result.ok, result.duration_ms, result.error.as_deref()).await;
 
-    Ok(json!({
+    let mut response = json!({
         "ok": result.ok,
         "output": result.output,
         "exit_code": result.exit_code,
         "duration_ms": result.duration_ms,
         "error": result.error,
-    }))
+    });
+    if let Some(ref state) = result.terminal_state {
+        response["terminal_state"] = state.clone();
+    }
+    if let Some(ref cursor) = result.cursor {
+        response["cursor"] = cursor.clone();
+    }
+    Ok(response)
 }
 
 /// 内部 session_create（不记 audit）
@@ -785,13 +805,21 @@ async fn batch_exec(ctx: &ToolContext, args: Value) -> Result<Value> {
 
             let result = exec_in_session(&mut stream, session_name, &pane_id, &cmd, timeout_ms, max_lines).await;
 
-            (host_name, json!({
+            let mut per_host = json!({
                 "ok": result.ok && result.error.is_none(),
                 "output": result.output,
                 "exit_code": result.exit_code,
                 "duration_ms": result.duration_ms,
                 "error": result.error,
-            }))
+            });
+            if let Some(ref state) = result.terminal_state {
+                per_host["terminal_state"] = state.clone();
+            }
+            if let Some(ref cursor) = result.cursor {
+                per_host["cursor"] = cursor.clone();
+            }
+
+            (host_name, per_host)
         });
 
         handles.push(handle);

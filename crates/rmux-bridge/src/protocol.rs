@@ -11,6 +11,7 @@ use rmux_sdk::{
     PaneProcessState, PaneRespawnOptions, ProcessCommandSpec, ProcessSpec, SessionName,
     SplitDirection, TerminalSizeSpec,
 };
+use crate::terminal_state::detect_terminal_state;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -269,7 +270,9 @@ impl ProtocolProxy {
             match self.rmux.get_pane_by_id(&sn, pane_id).await {
                 Ok(pane) => match pane.snapshot().await {
                     Ok(snapshot) => {
-                        let full_text = Self::clean_text(&snapshot.visible_text(), None);
+                        let raw_text = snapshot.visible_text();
+                        let state = detect_terminal_state(&raw_text, snapshot.cursor.col, snapshot.cursor.visible);
+                        let full_text = Self::clean_text(&raw_text, None);
                         let text = if max_lines.is_some_and(|n| n > 0) {
                             let n = max_lines.unwrap();
                             let lines: Vec<&str> = full_text.lines().collect();
@@ -281,7 +284,16 @@ impl ProtocolProxy {
                         } else {
                             full_text
                         };
-                        json!({"ok": true, "text": text})
+                        json!({
+                            "ok": true,
+                            "text": text,
+                            "terminal_state": state,
+                            "cursor": {
+                                "row": snapshot.cursor.row,
+                                "col": snapshot.cursor.col,
+                                "visible": snapshot.cursor.visible,
+                            }
+                        })
                     }
                     Err(e) => json!({"ok": false, "error": e.to_string()}),
                 },
@@ -313,7 +325,25 @@ impl ProtocolProxy {
         };
         let timeout = std::time::Duration::from_millis(timeout_ms);
         match tokio::time::timeout(timeout, pane.wait_for_text(text)).await {
-            Ok(Ok(())) => json!({"ok": true, "found": true}),
+            Ok(Ok(())) => {
+                match pane.snapshot().await {
+                    Ok(snapshot) => {
+                        let raw_text = snapshot.visible_text();
+                        let state = detect_terminal_state(&raw_text, snapshot.cursor.col, snapshot.cursor.visible);
+                        json!({
+                            "ok": true,
+                            "found": true,
+                            "terminal_state": state,
+                            "cursor": {
+                                "row": snapshot.cursor.row,
+                                "col": snapshot.cursor.col,
+                                "visible": snapshot.cursor.visible,
+                            }
+                        })
+                    }
+                    Err(_) => json!({"ok": true, "found": true}),
+                }
+            }
             Ok(Err(e)) => json!({"ok": false, "error": e.to_string()}),
             Err(_) => {
                 json!({"ok": false, "found": false, "error": format!("timeout waiting for: {}", text)})
@@ -936,6 +966,21 @@ impl ProtocolProxy {
             Ok(pane) => match pane.info().await {
                 Ok(info) => {
                     let pane_info = info.panes.iter().find(|p| p.id == pane_id);
+                    let (terminal_state, cursor_info) = match pane.snapshot().await {
+                        Ok(snapshot) => {
+                            let raw_text = snapshot.visible_text();
+                            let state = detect_terminal_state(&raw_text, snapshot.cursor.col, snapshot.cursor.visible);
+                            (
+                                serde_json::to_value(state).unwrap_or(serde_json::Value::Null),
+                                json!({
+                                    "row": snapshot.cursor.row,
+                                    "col": snapshot.cursor.col,
+                                    "visible": snapshot.cursor.visible,
+                                }),
+                            )
+                        }
+                        Err(_) => (serde_json::Value::Null, serde_json::Value::Null),
+                    };
                     match pane_info {
                         Some(p) => json!({
                             "ok": true,
@@ -949,7 +994,9 @@ impl ProtocolProxy {
                                 "command": p.command,
                                 "working_directory": p.working_directory,
                                 "tags": p.tags,
-                            }
+                            },
+                            "terminal_state": terminal_state,
+                            "cursor": cursor_info,
                         }),
                         None => json!({"ok": false, "error": "pane not found in info snapshot"}),
                     }
@@ -1777,7 +1824,20 @@ impl ProtocolProxy {
             .timeout(std::time::Duration::from_millis(timeout_ms))
             .await
         {
-            Ok(_snapshot) => json!({"ok": true, "stable": true}),
+            Ok(snapshot) => {
+                let raw_text = snapshot.visible_text();
+                let state = detect_terminal_state(&raw_text, snapshot.cursor.col, snapshot.cursor.visible);
+                json!({
+                    "ok": true,
+                    "stable": true,
+                    "terminal_state": state,
+                    "cursor": {
+                        "row": snapshot.cursor.row,
+                        "col": snapshot.cursor.col,
+                        "visible": snapshot.cursor.visible,
+                    }
+                })
+            }
             Err(e) => json!({
                 "ok": false,
                 "stable": false,

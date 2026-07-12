@@ -125,7 +125,9 @@
 | `pane_id` | string | ✅ | |
 | `max_lines` | integer | | 默认 200，0=不限制 |
 
-**返回** `{"ok": true, "text": "..."}`
+**返回** `{"ok": true, "text": "...", "terminal_state": "ready", "cursor": {"row": 0, "col": 14, "visible": true}}`
+
+> `terminal_state` 为终端状态分类：`ready`（shell 提示符）、`running`（命令执行中）、`password`（等待密码）、`confirm`（等待确认）、`repl`（交互式环境）、`editor`（编辑器）、`pager`（分页器）、`unknown`。
 
 ### `wait_for_text`
 
@@ -139,7 +141,7 @@
 | `text` | string | ✅ | 等待出现的文本 |
 | `timeout_ms` | number | | 等待超时毫秒数，默认 30000 |
 
-**返回** `{"ok": true, "found": true}`
+**返回** `{"ok": true, "found": true, "terminal_state": "ready", "cursor": {"row": 0, "col": 14, "visible": true}}`
 
 ### `stream_pane`
 
@@ -307,9 +309,11 @@
 | `max_lines` | integer | | 默认 200，0=不限制 |
 | `clear_screen` | boolean | | 执行前是否清屏，默认 false |
 
-**返回** `{"ok": true, "output": "...", "exit_code": 0, "duration_ms": 70}`
+**返回** `{"ok": true, "output": "...", "exit_code": 0, "duration_ms": 70, "terminal_state": "ready", "cursor": {"row": 5, "col": 14, "visible": true}}`
 
-超时：`{"ok": false, "output": "...", "exit_code": null, "error": "timeout..."}`
+超时：`{"ok": false, "output": "...", "exit_code": null, "error": "timeout...", "terminal_state": "running", "cursor": {"row": 5, "col": 0, "visible": true}}`
+
+> `terminal_state` 和 `cursor` 仅在 bridge 支持时返回（向后兼容）。
 
 ✅ 适用：一次性会自行退出的命令（`ls`、`cat`、`grep`、`systemctl`、`kubectl`、`apt-get`、`curl` 等）
 ❌ 不适用：交互式程序（`vim`、`htop`、`less`）、不自动退出的命令（`tail -f`、`nc -l`、`ping`）
@@ -360,7 +364,7 @@
 | `stable_ms` | number | | 稳定持续毫秒数，默认 500 |
 | `timeout_ms` | number | | 最大等待毫秒数，默认 30000 |
 
-**返回** `{"ok": true, "stable": true}`
+**返回** `{"ok": true, "stable": true, "terminal_state": "ready", "cursor": {"row": 5, "col": 14, "visible": true}}`
 
 超时：`{"ok": false, "stable": false, "error": "timeout: pane did not stabilize within ..."}`
 
@@ -577,7 +581,9 @@
 | `session_name` | string | ✅ |
 | `pane_id` | string | ✅ |
 
-**返回** `{"ok": true, "info": {"pane_id": "%0", "window_id": "@0", "session_id": "$0", "index": 0, "size_cols": 170, "size_rows": 39, "command": null, "working_directory": "/root", "tags": []}}`
+**返回** `{"ok": true, "info": {"pane_id": "%0", "window_id": "@0", "session_id": "$0", "index": 0, "size_cols": 170, "size_rows": 39, "command": null, "working_directory": "/root", "tags": []}, "terminal_state": "ready", "cursor": {"row": 0, "col": 14, "visible": true}}`
+
+> `terminal_state` 和 `cursor` 为附加字段，snapshot 失败时值为 `null`。
 
 ### `window_info`
 
