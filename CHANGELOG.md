@@ -18,6 +18,7 @@
   - 完整审计日志记录
 
 ### Removed
+- **移除 TCP/TLS 回退传输**：MCP 与 Bridge 之间仅使用 QUIC 协议，删除 TCP listener、yamux 多路复用、`proxy_legacy`、`BridgeStream::Tcp` 等约 700 行代码。移除 `tokio-rustls`（MCP 侧）和 `tokio-yamux`（Bridge 侧）依赖
 - `--insecure` 参数完全禁用，`--ca-cert` 改为必填（H-03 高危安全风险：消除 MITM 攻击面）
 
 ### Changed
@@ -36,7 +37,7 @@
 ### Added
 - 39 MCP 工具（38 可用 + 1 开发中 `stream_pane`）
 - 3 个批量操作工具：`batch_exec`、`batch_upload`、`batch_download`（多主机并发执行/上传/下载）
-- QUIC 优先 + TCP/TLS 自动降级双协议传输
+- QUIC 协议传输（UDP :9778）
 - CA 签发 + 按主机独立证书的多主机 PKI 体系
 - Windows/macOS/Linux 客户端原生支持
 - Bridge 并发连接限制（`--max-connections`，默认 256）

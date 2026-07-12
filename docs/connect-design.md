@@ -81,7 +81,7 @@ $ agent-ops connect prod-web-01 --session agent-ops --pane %0
 | **断开后** | shell 终止，进程丢失 | shell 继续，进程存活 |
 | **多人接入** | 各自独立的 shell | 可以接入同一个 pane（共享屏幕） |
 | **AI 协作** | AI 无法接入你的 SSH session | AI 和人可以操作同一个 pane |
-| **传输层** | TCP + SSH 协议 | QUIC/TLS + Bridge Token |
+| **传输层** | TCP + SSH 协议 | QUIC + Bridge Token |
 | **凭证管理** | 本地持有 SSH 密钥 | AI 端不持有服务器凭证 |
 
 ### 2.4 人机协作场景

@@ -3,24 +3,8 @@
 
 use anyhow::{Context, Result};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::ServerConfig;
 use std::io::BufReader;
 use std::path::Path;
-use std::sync::Arc;
-
-/// Loads the TLS server certificate chain and private key from `cert_path`
-/// and `key_path`, returning an `Arc<ServerConfig>` ready for use with tokio-rustls.
-pub fn load_tls_server_config(cert_path: &Path, key_path: &Path) -> Result<Arc<ServerConfig>> {
-    let certs = load_certs(cert_path)?;
-    let key = load_private_key(key_path)?;
-
-    let config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .context("failed to build TLS server config")?;
-
-    Ok(Arc::new(config))
-}
 
 fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
     let cert_pem = std::fs::read(path)

@@ -10,7 +10,6 @@ path = "src/main.rs"
 [dependencies]
 agent-ops-core.workspace = true
 tokio.workspace = true
-tokio-rustls.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
@@ -24,6 +23,5 @@ regex.workspace = true
 sha2 = "0.10"
 futures.workspace = true
 quinn.workspace = true
-tokio-yamux = "0.3"
 base64 = "0.22"
 libc = "0.2"

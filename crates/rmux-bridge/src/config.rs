@@ -1,5 +1,5 @@
 //! CLI configuration parsed from command-line arguments. Defines the
-//! listen address, RMUX socket path, TLS certificate/key paths, and
+//! QUIC listen address, RMUX socket path, TLS certificate/key paths, and
 //! the authentication token.
 
 use clap::Parser;
@@ -10,12 +10,9 @@ use std::path::PathBuf;
 #[command(
     name = "rmux-bridge",
     version,
-    about = "RMUX Bridge - TCP/TLS to Unix socket protocol-aware proxy"
+    about = "RMUX Bridge - QUIC to Unix socket protocol-aware proxy"
 )]
 pub struct BridgeConfig {
-    #[arg(long, default_value = "0.0.0.0:9778")]
-    pub listen_addr: String,
-
     #[arg(long, default_value = "/tmp/rmux-1000/default")]
     pub rmux_socket: String,
 
@@ -28,12 +25,12 @@ pub struct BridgeConfig {
     #[arg(long, env = "BRIDGE_AUTH_TOKEN")]
     pub auth_token: String,
 
-    /// QUIC listen address for file transfers (UDP). Same port as TCP is fine
-    /// since TCP and UDP use separate protocol stacks.
+    /// QUIC listen address (UDP). Used for terminal operations, file transfers,
+    /// tunnels, and interactive sessions.
     #[arg(long, default_value = "0.0.0.0:9778", env = "QUIC_LISTEN_ADDR")]
     pub quic_listen_addr: String,
 
-    /// Maximum concurrent connections (TCP + QUIC each). 0 = unlimited.
+    /// Maximum concurrent connections. 0 = unlimited.
     #[arg(long, default_value = "256", env = "MAX_CONNECTIONS")]
     pub max_connections: usize,
 

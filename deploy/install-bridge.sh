@@ -52,7 +52,7 @@ echo "Detected rmux socket: $RMUX_SOCK"
 # 8. 创建 rmux-bridge.service
 ssh "$REMOTE_HOST" "sudo tee /etc/systemd/system/rmux-bridge.service" <<SERVICE_EOF
 [Unit]
-Description=RMUX Bridge - TCP/TLS to Unix socket proxy
+Description=RMUX Bridge - QUIC to Unix socket proxy
 After=network.target rmux-daemon.service
 Requires=rmux-daemon.service
 
@@ -60,7 +60,6 @@ Requires=rmux-daemon.service
 Type=simple
 EnvironmentFile=/opt/agent-ops/bridge.env
 ExecStart=/opt/agent-ops/rmux-bridge \\
-    --listen-addr 0.0.0.0:9778 \\
     --quic-listen-addr 0.0.0.0:9778 \\
     --max-connections 256 \\
     --rmux-socket $RMUX_SOCK \\

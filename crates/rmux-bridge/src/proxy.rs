@@ -552,57 +552,6 @@ async fn send_response(
     Ok(())
 }
 
-pub async fn proxy_legacy<S>(first_byte: u8, stream: S, protocol_proxy: &ProtocolProxy) -> Result<()>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-{
-    let prefixed = PrefixedStream { first: Some(first_byte), inner: stream };
-    proxy_protocol_aware(prefixed, protocol_proxy).await
-}
-
-struct PrefixedStream<S> {
-    first: Option<u8>,
-    inner: S,
-}
-
-impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for PrefixedStream<S> {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        if let Some(b) = self.first.take() {
-            buf.put_slice(&[b]);
-            return std::task::Poll::Ready(Ok(()));
-        }
-        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
-    }
-}
-
-impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for PrefixedStream<S> {
-    fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
-    }
-}
-
 pub struct QuicStreamAdapter {
     pub recv: quinn::RecvStream,
     pub send: quinn::SendStream,

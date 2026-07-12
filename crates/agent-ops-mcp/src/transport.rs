@@ -1,120 +1,14 @@
-//! TLS transport layer for connecting the MCP server to remote rmux-bridge
+//! QUIC transport layer for connecting the MCP server to remote rmux-bridge
 //! instances. Requires CA-verified TLS handshakes and token-based authentication.
 
 use anyhow::{Context, Result};
-use rustls::pki_types::{CertificateDer, ServerName};
+use rustls::pki_types::CertificateDer;
 use std::io::BufReader;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::TcpStream;
 use tokio::time::sleep;
-use tokio_rustls::TlsConnector;
-
-/// Connects to a bridge via TCP/TLS, authenticates with the given token,
-/// and returns the encrypted stream.
-pub async fn connect_to_bridge(
-    bridge_addr: &str,
-    auth_token: &str,
-    ca_cert_path: &str,
-) -> Result<tokio_rustls::client::TlsStream<TcpStream>> {
-    let tcp = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(bridge_addr))
-        .await
-        .context("TCP connect timeout after 5s")?
-        .with_context(|| format!("failed to connect to bridge at {}", bridge_addr))?;
-
-    let tls_config = build_tls_client_config(ca_cert_path)?;
-    let connector = TlsConnector::from(Arc::new(tls_config));
-    let hostname = bridge_addr.split(':').next().unwrap_or("localhost");
-    let server_name = ServerName::try_from(hostname)?.to_owned();
-
-    let mut tls_stream = connector
-        .connect(server_name, tcp)
-        .await
-        .map_err(|e| anyhow::anyhow!("TLS handshake failed: {e}"))?;
-
-    send_auth_frame(&mut tls_stream, auth_token).await?;
-
-    let mut response = [0u8; 3];
-    tokio::io::AsyncReadExt::read_exact(&mut tls_stream, &mut response).await?;
-
-    if &response != b"OK\n" {
-        anyhow::bail!("bridge authentication failed");
-    }
-
-    tracing::info!("connected and authenticated to bridge at {}", bridge_addr);
-    Ok(tls_stream)
-}
-
-/// Like `connect_to_bridge` but retries up to `max_retries` times with
-/// exponential backoff before giving up.
-#[allow(dead_code)]
-pub async fn connect_to_bridge_with_retry(
-    bridge_addr: &str,
-    auth_token: &str,
-    ca_cert_path: &str,
-    max_retries: u32,
-) -> Result<tokio_rustls::client::TlsStream<TcpStream>> {
-    let mut attempt = 0;
-    loop {
-        match connect_to_bridge(bridge_addr, auth_token, ca_cert_path).await {
-            Ok(stream) => return Ok(stream),
-            Err(e) if attempt < max_retries => {
-                attempt += 1;
-                let delay = Duration::from_millis(500 * 2u64.pow(attempt));
-                tracing::warn!(
-                    "bridge connection failed (attempt {}/{}), retrying in {:?}: {}",
-                    attempt,
-                    max_retries,
-                    delay,
-                    e
-                );
-                sleep(delay).await;
-            }
-            Err(e) => return Err(e),
-        }
-    }
-}
-
-fn build_tls_client_config(ca_cert_path: &str) -> Result<rustls::ClientConfig> {
-    let ca_bytes = std::fs::read(ca_cert_path)
-        .with_context(|| format!("failed to read CA cert: {}", ca_cert_path))?;
-    let mut reader = BufReader::new(ca_bytes.as_slice());
-    let certs: Vec<CertificateDer> = rustls_pemfile::certs(&mut reader)
-        .filter_map(|r| r.ok())
-        .collect();
-    if certs.is_empty() {
-        anyhow::bail!("no valid certificates found in {}", ca_cert_path);
-    }
-
-    let mut root_store = rustls::RootCertStore::empty();
-    for cert in certs {
-        root_store
-            .add(cert)
-            .with_context(|| format!("failed to add CA cert from {}", ca_cert_path))?;
-    }
-    tracing::info!("TLS: verifying bridge certificate against CA: {}", ca_cert_path);
-
-    Ok(rustls::ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth())
-}
-
-async fn send_auth_frame(
-    stream: &mut (impl tokio::io::AsyncWriteExt + Unpin),
-    token: &str,
-) -> Result<()> {
-    let token_bytes = token.as_bytes();
-    stream.write_all(b"AUTH").await?;
-    stream
-        .write_all(&(token_bytes.len() as u32).to_le_bytes())
-        .await?;
-    stream.write_all(token_bytes).await?;
-    stream.flush().await?;
-    Ok(())
-}
 
 // ══════════════════════════════════════════════════════════════════
 // QUIC connection (file transfers)
@@ -263,11 +157,10 @@ async fn send_auth_frame_quic(send: &mut quinn::SendStream, token: &str) -> anyh
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Hybrid transport: QUIC-first with TCP/TLS fallback
+// QUIC transport
 // ══════════════════════════════════════════════════════════════════
 
 pub enum BridgeStream {
-    Tcp(Box<tokio_rustls::client::TlsStream<TcpStream>>),
     Quic {
         #[allow(dead_code)]
         conn: quinn::Connection,
@@ -283,7 +176,6 @@ impl AsyncRead for BridgeStream {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         match &mut *self {
-            BridgeStream::Tcp(s) => Pin::new(&mut **s).poll_read(cx, buf),
             BridgeStream::Quic { recv, .. } => Pin::new(recv).poll_read(cx, buf),
         }
     }
@@ -296,7 +188,6 @@ impl AsyncWrite for BridgeStream {
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         match &mut *self {
-            BridgeStream::Tcp(s) => Pin::new(&mut **s).poll_write(cx, buf),
             BridgeStream::Quic { send, .. } => {
                 match Pin::new(send).poll_write(cx, buf) {
                     Poll::Ready(Ok(n)) => Poll::Ready(Ok(n)),
@@ -311,10 +202,9 @@ impl AsyncWrite for BridgeStream {
 
     fn poll_flush(
         mut self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
+        _cx: &mut TaskContext<'_>,
     ) -> Poll<std::io::Result<()>> {
         match &mut *self {
-            BridgeStream::Tcp(s) => Pin::new(&mut **s).poll_flush(cx),
             BridgeStream::Quic { .. } => Poll::Ready(Ok(())),
         }
     }
@@ -324,45 +214,30 @@ impl AsyncWrite for BridgeStream {
         cx: &mut TaskContext<'_>,
     ) -> Poll<std::io::Result<()>> {
         match &mut *self {
-            BridgeStream::Tcp(s) => Pin::new(&mut **s).poll_shutdown(cx),
             BridgeStream::Quic { send, .. } => Pin::new(send).poll_shutdown(cx),
         }
     }
 }
 
-/// QUIC-first connection with TCP/TLS fallback.
-/// Tries QUIC (UDP) first for 0-RTT reconnection and stream multiplexing.
-/// Falls back to TCP/TLS if QUIC is unavailable (firewall blocks UDP, etc.).
+/// QUIC connection with retry.
 pub async fn connect_to_bridge_hybrid(
     bridge_addr: &str,
     auth_token: &str,
     ca_cert_path: &str,
     max_retries: u32,
 ) -> Result<BridgeStream> {
-    // Try QUIC first
-    match connect_to_bridge_quic(bridge_addr, auth_token, ca_cert_path).await {
-        Ok((conn, send, recv)) => {
-            tracing::info!("connected via QUIC to {}", bridge_addr);
-            return Ok(BridgeStream::Quic { conn, send, recv });
-        }
-        Err(e) => {
-            tracing::debug!("QUIC connect failed (will try TCP): {}", e);
-        }
-    }
-
-    // Fall back to TCP/TLS with retry
     let mut attempt = 0;
     loop {
-        match connect_to_bridge(bridge_addr, auth_token, ca_cert_path).await {
-            Ok(stream) => {
-                tracing::info!("connected via TCP/TLS to {}", bridge_addr);
-                return Ok(BridgeStream::Tcp(Box::new(stream)));
+        match connect_to_bridge_quic(bridge_addr, auth_token, ca_cert_path).await {
+            Ok((conn, send, recv)) => {
+                tracing::info!("connected via QUIC to {}", bridge_addr);
+                return Ok(BridgeStream::Quic { conn, send, recv });
             }
             Err(e) if attempt < max_retries => {
                 attempt += 1;
                 let delay = Duration::from_millis(500 * 2u64.pow(attempt));
                 tracing::warn!(
-                    "TCP connect failed (attempt {}/{}), retrying in {:?}: {}",
+                    "QUIC connect failed (attempt {}/{}), retrying in {:?}: {}",
                     attempt, max_retries, delay, e
                 );
                 sleep(delay).await;
@@ -460,33 +335,23 @@ pub async fn connect_to_bridge_hybrid_stream(
     idle_timeout_secs: u64,
     keepalive_secs: u64,
 ) -> Result<BridgeStream> {
-    match connect_to_bridge_quic_stream(
-        bridge_addr, auth_token, ca_cert_path,
-        idle_timeout_secs, keepalive_secs,
-    )
-    .await
-    {
-        Ok((conn, send, recv)) => {
-            tracing::info!("connected via QUIC stream to {}", bridge_addr);
-            return Ok(BridgeStream::Quic { conn, send, recv });
-        }
-        Err(e) => {
-            tracing::debug!("QUIC stream connect failed (will try TCP): {}", e);
-        }
-    }
-
     let mut attempt = 0;
     loop {
-        match connect_to_bridge(bridge_addr, auth_token, ca_cert_path).await {
-            Ok(stream) => {
-                tracing::info!("connected via TCP/TLS stream to {}", bridge_addr);
-                return Ok(BridgeStream::Tcp(Box::new(stream)));
+        match connect_to_bridge_quic_stream(
+            bridge_addr, auth_token, ca_cert_path,
+            idle_timeout_secs, keepalive_secs,
+        )
+        .await
+        {
+            Ok((conn, send, recv)) => {
+                tracing::info!("connected via QUIC stream to {}", bridge_addr);
+                return Ok(BridgeStream::Quic { conn, send, recv });
             }
             Err(e) if attempt < max_retries => {
                 attempt += 1;
                 let delay = Duration::from_millis(500 * 2u64.pow(attempt));
                 tracing::warn!(
-                    "TCP stream connect failed (attempt {}/{}), retrying in {:?}: {}",
+                    "QUIC stream connect failed (attempt {}/{}), retrying in {:?}: {}",
                     attempt, max_retries, delay, e
                 );
                 sleep(delay).await;

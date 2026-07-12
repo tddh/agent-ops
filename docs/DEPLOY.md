@@ -5,7 +5,7 @@
 ## 架构
 
 ```
-                               QUIC/TCP :9778  终端操作 + 文件传输
+                               QUIC :9778  终端操作 + 文件传输
 ┌─────────────────┐  MCP stdio  ┌──────────────┐ ════════════════════════╗ ┌──────────────────┐   Unix Socket  ┌─────────┐
 │  AI 客户端        │◄─────────►│ agent-ops-mcp │                       ║ │   rmux-bridge     │◄─────────────►│  RMUX   │
 │ (OpenCode/Claude) │            │  (macOS/Linux/Windows) │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ║ │   (Linux 远程主机)  │                │ daemon  │
@@ -13,7 +13,7 @@
 ```
 
 - **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 60 个终端控制工具 + 操作审计 CLI
-- **rmux-bridge**: 部署在每台目标 Linux 主机上，TLS 加密代理 → RMUX daemon。终端操作与文件传输统一走 QUIC/TCP 双协议，共享 9778 端口（QUIC 优先，UDP 不可用时自动降级 TCP/TLS）
+- **rmux-bridge**: 部署在每台目标 Linux 主机上，QUIC 加密代理 → RMUX daemon。终端操作与文件传输统一走 QUIC 协议（UDP :9778）
 - **RMUX daemon**: 每个 Linux 主机上的终端多路复用器
 
 ## 前置条件
@@ -23,7 +23,7 @@
 | 目标主机 | Linux x86_64，systemd，有 SSH 访问 |
 | RMUX | `rmux` 0.8+ daemon 已安装并运行（`curl -fsSL https://rmux.io/install.sh \| sh`） |
 | 构建机 | Rust 1.85+，`x86_64-linux-musl-gcc`（交叉编译用 `brew install FiloSottile/musl-cross/musl-cross`） |
-| 端口 | bridge 监听 9778（TLS/QUIC） |
+| 端口 | bridge 监听 9778（QUIC/UDP） |
 | 证书 | 自签名 TLS 证书（`openssl` 即可） |
 
 ## 快速开始
@@ -94,7 +94,7 @@ BRIDGE_TOKEN="<your-token>" bash deploy/install-bridge.sh \
 
 ```ini
 [Unit]
-Description=RMUX Bridge - TCP/TLS to Unix socket proxy
+Description=RMUX Bridge - QUIC to Unix socket proxy
 After=network.target rmux-daemon.service
 Requires=rmux-daemon.service
 
@@ -102,7 +102,6 @@ Requires=rmux-daemon.service
 Type=simple
 EnvironmentFile=/opt/agent-ops/bridge.env
 ExecStart=/opt/agent-ops/rmux-bridge \
-    --listen-addr 0.0.0.0:9778 \
     --quic-listen-addr 0.0.0.0:9778 \
     --max-connections 256 \
     --rmux-socket /root/.rmux/rmux-0/default \
@@ -134,7 +133,6 @@ ssh root@<your-bridge-ip> "systemctl status rmux-bridge --no-pager"
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--listen-addr` | `0.0.0.0:9778` | TCP/TLS 监听地址（终端操作） |
 | `--quic-listen-addr` | `0.0.0.0:9778` | QUIC/UDP 监听地址（终端操作 + 文件传输） |
 | `--max-connections` | `256` | 最大并发连接数，0=无限制（`MAX_CONNECTIONS` 环境变量） |
 | `--rmux-socket` | `/tmp/rmux-1000/default` | RMUX daemon Unix socket 路径 |
@@ -143,7 +141,7 @@ ssh root@<your-bridge-ip> "systemctl status rmux-bridge --no-pager"
 | `--auth-token` | 环境变量 `BRIDGE_AUTH_TOKEN` | 认证令牌 |
 | `--log-level` | `info` | 日志级别：trace/debug/info/warn/error（`RUST_LOG` 环境变量） |
 
-> **QUIC/TCP 共享 9778 端口**：MCP client 优先使用 QUIC，UDP 被防火墙阻断时自动降级 TCP/TLS。
+> **QUIC 协议**：所有通信走 QUIC（UDP :9778），内置 TLS 1.3 加密。确保防火墙放行 UDP 9778 端口。
 
 ### 5. MCP Server CLI 参数参考
 

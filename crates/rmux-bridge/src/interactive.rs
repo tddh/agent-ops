@@ -153,7 +153,7 @@ pub async fn handle_interactive_control(
                 let new_rows = u16::from_le_bytes([payload[2], payload[3]]);
                 
                 let state = session_state.lock().await;
-                if let Some(ref master_fd) = state.as_ref().and_then(|s| s.master_fd.as_ref()) {
+                if let Some(master_fd) = state.as_ref().and_then(|s| s.master_fd.as_ref()) {
                     let winsize = libc::winsize {
                         ws_row: new_rows,
                         ws_col: new_cols,

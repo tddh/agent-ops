@@ -1,49 +1,6 @@
 //! Authentication layer for incoming bridge connections.
 //! Uses constant-time comparison of a pre-shared static token.
 
-use anyhow::{bail, Result};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-const AUTH_PREAMBLE: &[u8; 4] = b"AUTH";
-
-/// Reads the AUTH preamble + length-prefixed token from the stream,
-/// verifies it against expected_token using constant-time comparison,
-/// and sends OK\n or ERR ...\n.
-pub async fn authenticate(
-    stream: &mut (impl AsyncReadExt + AsyncWriteExt + Unpin),
-    expected_token: &str,
-) -> Result<()> {
-    let mut preamble = [0u8; 4];
-    stream.read_exact(&mut preamble).await?;
-
-    if &preamble != AUTH_PREAMBLE {
-        stream.write_all(b"ERR invalid auth preamble\n").await?;
-        bail!("invalid auth preamble: {:?}", preamble);
-    }
-
-    let mut len_buf = [0u8; 4];
-    stream.read_exact(&mut len_buf).await?;
-    let token_len = u32::from_le_bytes(len_buf) as usize;
-
-    if token_len > 1024 {
-        stream.write_all(b"ERR token too long\n").await?;
-        bail!("token too long: {}", token_len);
-    }
-
-    let mut token_buf = vec![0u8; token_len];
-    stream.read_exact(&mut token_buf).await?;
-    let received_token = std::str::from_utf8(&token_buf)?;
-
-    if !constant_time_eq(received_token.as_bytes(), expected_token.as_bytes()) {
-        stream.write_all(b"ERR auth failed\n").await?;
-        bail!("authentication failed");
-    }
-
-    stream.write_all(b"OK\n").await?;
-    tracing::info!("client authenticated successfully");
-    Ok(())
-}
-
 /// QUIC version: authenticate via bidi stream.
 pub async fn authenticate_quic(
     send: &mut quinn::SendStream,
