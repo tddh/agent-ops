@@ -331,6 +331,11 @@
 
 > 对不自动退出的命令，请用 `send_keys` 发送，然后用 `wait_for_text`/`capture_pane` 观察输出，用 `send_keys("\x03")` 发送 Ctrl-C 中断。
 
+> ⚠️ **长时间命令**（如 `ansible-playbook`、`terraform apply`、大型编译等）：默认 30s 超时不够，需要显式传 `timeout_ms`（如 `600000` = 10 分钟）。更重要的是 — `exec` 超时后**命令仍在远端运行**，session 保留。你可以：
+> - 设大 `timeout_ms` 一次等到底
+> - 或设短超时 + 后期 `capture_pane` 查看进度、`wait_for_text("PLAY RECAP")` 等完成标志
+> - 推荐长时间命令用 `shell_command` 启动 + `wait_for_text`/`stream_pane` 监控进度，比 exec 更灵活
+
 ### `wait_exit`
 
 等待窗格中进程退出并返回退出状态。
@@ -360,6 +365,8 @@
 | `starting_at` | string | | `"now"`（默认，从最新输出后开始）或 `"oldest"`（从保留的最旧输出开始） |
 
 **返回** `{"ok": true, "output": "<base64>", "collected_bytes": 4096, "exit_code": 0, "signal": null, "truncated": false, "duration_ms": 1234}`
+
+> ⚠️ **超时行为**：超时后将**中止（abort）远端任务**，进程会被终止。这与 `exec` 不同 — `exec` 超时后命令仍在运行，session 保留。如果你需要"fire and forget"式的长时间执行，请用 `shell_command` + 后期 `capture_pane`/`wait_for_text`，而不是 `collect_until_exit`。
 
 ---
 

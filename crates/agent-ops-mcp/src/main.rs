@@ -334,7 +334,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "exec",
-                "description": "One-shot command execution: send command → wait for exit → capture output → clean text (default 200 lines, 30s timeout). Automatically clears any unexecuted input before running. Returns output, exit_code, duration_ms, plus terminal_state (ready/running/password/confirm/repl/editor/pager/unknown) and cursor position. Do NOT use shell combiners (&&, ;, |) unless the user explicitly requests it — run commands separately. For self-terminating commands (ls, cat, grep, systemctl, kubectl, curl). NOT for interactive programs (vim, htop) or non-terminating commands (tail -f, ping). Use send_keys + capture_pane for those.",
+                "description": "One-shot command execution: send command → wait for exit → capture output → clean text (default 200 lines, 30s timeout). Automatically clears any unexecuted input before running. Returns output, exit_code, duration_ms, plus terminal_state (ready/running/password/confirm/repl/editor/pager/unknown) and cursor position. Do NOT use shell combiners (&&, ;, |) unless the user explicitly requests it — run commands separately. For self-terminating commands (ls, cat, grep, systemctl, kubectl, curl). NOT for interactive programs (vim, htop) or non-terminating commands (tail -f, ping). Use send_keys + capture_pane for those. For long-running commands (ansible-playbook, builds, terraform): increase timeout_ms — the command keeps running even on timeout (unlike collect_until_exit), and you can capture_pane later to recover output.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -815,7 +815,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "collect_until_exit",
-                "description": "Collect all pane output from now until the process exits. The pane process MUST already be running — use spawn_command or shell_command to start it first. More efficient than sentinel polling for commands with large output, as it streams directly without repeated capture_pane calls. Returns collected bytes and exit info. Default max is 1MB, default timeout is 60s. Use starting_at='oldest' to include scrollback history.",
+                "description": "Collect all pane output from now until the process exits. The pane process MUST already be running — use spawn_command or shell_command to start it first. More efficient than sentinel polling for commands with large output, as it streams directly without repeated capture_pane calls. Returns collected bytes and exit info. Default max is 1MB, default timeout is 60s. Use starting_at='oldest' to include scrollback history. ⚠️ On timeout, the remote task is ABORTED (process killed). Unlike exec where the command keeps running after timeout. For fire-and-forget long tasks, use shell_command + wait_for_text instead.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {

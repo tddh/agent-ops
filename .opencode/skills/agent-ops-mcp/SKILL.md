@@ -272,6 +272,10 @@ batch_exec(hosts=["tf01", "dns-backup"], command="hostname")
 3. capture_pane → 获取结果
 ```
 
+> ⚠️ **exec 超时不杀进程**：exec 的 timeout 只是客户端的等等，命令仍在远端 rmux pane 中运行。超时后可以用 `capture_pane` 查看进度，`wait_for_text` 等完成标志，或 `send_keys("\x03")` 中断。不要因为超时就重跑。
+>
+> ⚠️ **collect_until_exit 超时不同**：collect_until_exit 超时后会 **abort 远端任务**，进程被 kill。不要用于 fire-and-forget 场景。
+
 ### 实时监控长命令输出（stream_pane）
 ```
 # 适用于编译、下载等长时间运行的命令
@@ -320,6 +324,7 @@ split_pane_with(
 ### 收集大输出命令结果（collect_until_exit）
 ```
 # 比 exec 更高效，适合大输出命令
+# ⚠️ 超时后会 abort 远端任务！不要用于 fire-and-forget 长任务
 1. spawn_command(host, session_name, pane_id, command="find / -name '*.log'")
 2. collect_until_exit(host, session_name, pane_id, max_bytes=10485760)
    → 流式收集所有输出直到进程退出
@@ -356,7 +361,7 @@ host_capabilities(host="tf01", check="stream.control")
 | `authentication failed` | token 不匹配 | 检查 `hosts.yaml` 中的 `bridge_token` |
 | `recv: connection lost` | bridge 重启或网络中断 | 等待后重试 |
 | `pane still active` | spawn/shell_command 时 pane 非空闲 | 先 `close_pane` 或换 pane |
-| `timeout` | 命令执行超时 | 增大 `timeout_ms` 或检查命令是否卡住 |
+| `timeout` | 命令执行超时 | exec: 增大 `timeout_ms` 或检查命令是否卡住（⚠️ 超时后命令仍在运行！别重跑，用 capture_pane 补捞）。collect_until_exit: 超时后任务被 abort，需重跑。 |
 | `path traversal rejected` | 路径包含 `..` | 使用不含 `..` 的绝对路径或相对路径 |
 | `tunnel target not in allowed list` | 隧道目标不在白名单中 | 检查 `hosts.yaml` 中的 `allowed_tunnel_targets` 配置 |
 | `host not found` | 主机名不在 registry 中 | `host_list` 检查可用主机 |
@@ -454,8 +459,10 @@ capture_region(host, session_name, pane_id)
 
 跑命令？
 ├── 会自行退出（ls, cat, grep）→ `exec`
+├── 长程任务（ansible-playbook, terraform, 编译）→ `shell_command` + `wait_for_text` / `stream_pane`
 ├── 不会退出（tail -f, ping）→ `send_keys` + `capture_pane`
 ├── 大输出命令（find, du）→ `spawn_command` + `collect_until_exit`
+│   ⚠️ collect_until_exit 超时会 abort 任务
 ├── 需要实时监控输出 → `send_keys` + `stream_pane` 循环
 ├── 多台主机 → `batch_exec`
 └── 需要分屏并行 → `split_pane_with`
