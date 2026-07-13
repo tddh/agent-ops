@@ -45,3 +45,7 @@ docs/competitive-analysis.md
 .qoder/*
 .qoder
 docs/superpowers/plans/
+
+deploy/libexec/
+deploy/rmux
+deploy/rmux-daemon

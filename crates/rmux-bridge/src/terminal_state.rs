@@ -33,8 +33,16 @@ pub fn detect_terminal_state(text: &str, cursor_col: u16, cursor_visible: bool) 
     }
 
     // 取最后 12 行作为检测窗口（避免 scrollback 干扰）
-    let window_start = lines.len().saturating_sub(12);
-    let window = &lines[window_start..];
+    // 但跳过尾部空行，避免 prompt 在空行之前被漏掉
+    let mut effective_end = lines.len();
+    while effective_end > 0 && lines[effective_end - 1].trim().is_empty() {
+        effective_end -= 1;
+    }
+    if effective_end == 0 {
+        return TerminalState::Unknown;
+    }
+    let window_start = effective_end.saturating_sub(12);
+    let window = &lines[window_start..effective_end];
     let tail = window.last().map(|l| l.trim()).unwrap_or("");
 
     // ── 规则 0：光标不可见 → 先检查编辑器/分页器，否则 Running ──
