@@ -894,6 +894,12 @@ async fn batch_exec(ctx: &ToolContext, args: Value) -> Result<Value> {
             if let Some(ref cursor) = result.cursor {
                 per_host["cursor"] = cursor.clone();
             }
+            if let Some(ref pre_state) = result.pre_terminal_state {
+                per_host["pre_terminal_state"] = pre_state.clone();
+            }
+            if result.refused {
+                per_host["refused"] = json!(true);
+            }
 
             (host_name, per_host)
         });
