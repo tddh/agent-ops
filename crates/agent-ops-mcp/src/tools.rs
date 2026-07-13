@@ -1901,3 +1901,255 @@ async fn deploy_bridge(ctx: &ToolContext, args: Value) -> Result<Value> {
         "results": results_map,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_exec_response(result: &ExecResult) -> serde_json::Value {
+        let mut response = json!({
+            "ok": result.ok,
+            "output": result.output,
+            "exit_code": result.exit_code,
+            "duration_ms": result.duration_ms,
+            "error": result.error,
+        });
+        if let Some(ref state) = result.terminal_state {
+            response["terminal_state"] = state.clone();
+        }
+        if let Some(ref cursor) = result.cursor {
+            response["cursor"] = cursor.clone();
+        }
+        if let Some(ref pre_state) = result.pre_terminal_state {
+            response["pre_terminal_state"] = pre_state.clone();
+        }
+        if result.refused {
+            response["refused"] = json!(true);
+        }
+        response
+    }
+
+    // ── refused: editor ──
+    #[test]
+    fn test_exec_result_refused_editor() {
+        let result = ExecResult {
+            ok: false,
+            output: String::new(),
+            exit_code: None,
+            duration_ms: 0,
+            error: Some("Terminal is in editor (vim/nano). Use send_keys to interact with editor, or exit editor first.".to_string()),
+            terminal_state: Some(json!("editor")),
+            cursor: None,
+            pre_terminal_state: Some(json!("editor")),
+            refused: true,
+        };
+        let response = build_exec_response(&result);
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["refused"], true);
+        assert_eq!(response["pre_terminal_state"], "editor");
+        assert_eq!(response["terminal_state"], "editor");
+        assert!(response["error"].as_str().unwrap().contains("editor"));
+        assert!(response["error"].as_str().unwrap().contains("vim"));
+    }
+
+    // ── refused: pager ──
+    #[test]
+    fn test_exec_result_refused_pager() {
+        let result = ExecResult {
+            ok: false,
+            output: String::new(),
+            exit_code: None,
+            duration_ms: 0,
+            error: Some("Terminal is in pager (less/more). Use send_keys('q') to exit pager first.".to_string()),
+            terminal_state: Some(json!("pager")),
+            cursor: None,
+            pre_terminal_state: Some(json!("pager")),
+            refused: true,
+        };
+        let response = build_exec_response(&result);
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["refused"], true);
+        assert_eq!(response["pre_terminal_state"], "pager");
+        assert!(response["error"].as_str().unwrap().contains("pager"));
+        assert!(response["error"].as_str().unwrap().contains("less"));
+    }
+
+    // ── refused: password ──
+    #[test]
+    fn test_exec_result_refused_password() {
+        let result = ExecResult {
+            ok: false,
+            output: String::new(),
+            exit_code: None,
+            duration_ms: 0,
+            error: Some("Terminal is waiting for password. Use send_keys to provide password or Ctrl-C to cancel.".to_string()),
+            terminal_state: Some(json!("password")),
+            cursor: None,
+            pre_terminal_state: Some(json!("password")),
+            refused: true,
+        };
+        let response = build_exec_response(&result);
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["refused"], true);
+        assert_eq!(response["pre_terminal_state"], "password");
+        assert!(response["error"].as_str().unwrap().contains("password"));
+        assert!(response["error"].as_str().unwrap().contains("Ctrl-C"));
+    }
+
+    // ── refused: confirm ──
+    #[test]
+    fn test_exec_result_refused_confirm() {
+        let result = ExecResult {
+            ok: false,
+            output: String::new(),
+            exit_code: None,
+            duration_ms: 0,
+            error: Some("Terminal is waiting for confirmation. Use send_keys to respond.".to_string()),
+            terminal_state: Some(json!("confirm")),
+            cursor: None,
+            pre_terminal_state: Some(json!("confirm")),
+            refused: true,
+        };
+        let response = build_exec_response(&result);
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["refused"], true);
+        assert_eq!(response["pre_terminal_state"], "confirm");
+        assert!(response["error"].as_str().unwrap().contains("confirmation"));
+    }
+
+    // ── refused: running ──
+    #[test]
+    fn test_exec_result_refused_running() {
+        let result = ExecResult {
+            ok: false,
+            output: String::new(),
+            exit_code: None,
+            duration_ms: 0,
+            error: Some("A process is still running. Use wait_stable/wait_exit to wait, or send_keys(Ctrl-C) to stop it.".to_string()),
+            terminal_state: Some(json!("running")),
+            cursor: None,
+            pre_terminal_state: Some(json!("running")),
+            refused: true,
+        };
+        let response = build_exec_response(&result);
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["refused"], true);
+        assert_eq!(response["pre_terminal_state"], "running");
+        assert!(response["error"].as_str().unwrap().contains("still running"));
+    }
+
+    // ── refused: repl ──
+    #[test]
+    fn test_exec_result_refused_repl() {
+        let result = ExecResult {
+            ok: false,
+            output: String::new(),
+            exit_code: None,
+            duration_ms: 0,
+            error: Some("Terminal is in REPL (python3/mysql). Use send_keys to send REPL commands, or exit REPL first.".to_string()),
+            terminal_state: Some(json!("repl")),
+            cursor: None,
+            pre_terminal_state: Some(json!("repl")),
+            refused: true,
+        };
+        let response = build_exec_response(&result);
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["refused"], true);
+        assert_eq!(response["pre_terminal_state"], "repl");
+        assert!(response["error"].as_str().unwrap().contains("REPL"));
+    }
+
+    // ── refused: unknown ──
+    #[test]
+    fn test_exec_result_refused_unknown() {
+        let result = ExecResult {
+            ok: false,
+            output: String::new(),
+            exit_code: None,
+            duration_ms: 0,
+            error: Some("Terminal state is unknown. Use capture_pane to inspect terminal content.".to_string()),
+            terminal_state: Some(json!("unknown")),
+            cursor: None,
+            pre_terminal_state: Some(json!("unknown")),
+            refused: true,
+        };
+        let response = build_exec_response(&result);
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["refused"], true);
+        assert_eq!(response["pre_terminal_state"], "unknown");
+        assert!(response["error"].as_str().unwrap().contains("unknown"));
+        assert!(response["error"].as_str().unwrap().contains("capture_pane"));
+    }
+
+    // ── Normal execution (ready state, refused=false) ──
+    #[test]
+    fn test_exec_result_normal_ready() {
+        let result = ExecResult {
+            ok: true,
+            output: "file1.txt\nfile2.txt".to_string(),
+            exit_code: Some(0),
+            duration_ms: 120,
+            error: None,
+            terminal_state: Some(json!("ready")),
+            cursor: Some(json!({"row": 5, "col": 14, "visible": true})),
+            pre_terminal_state: Some(json!("ready")),
+            refused: false,
+        };
+        let response = build_exec_response(&result);
+        assert_eq!(response["ok"], true);
+        // refused=false → "refused" field should be absent
+        assert!(response.get("refused").is_none());
+        assert_eq!(response["pre_terminal_state"], "ready");
+        assert_eq!(response["terminal_state"], "ready");
+        assert_eq!(response["exit_code"], 0);
+        assert_eq!(response["output"], "file1.txt\nfile2.txt");
+        assert_eq!(response["duration_ms"], 120);
+        assert!(response["error"].is_null());
+        assert!(response.get("cursor").is_some());
+    }
+
+    // ── Execution error (non-refused, e.g. send_keys failure) ──
+    #[test]
+    fn test_exec_result_error_non_refused() {
+        let result = ExecResult {
+            ok: false,
+            output: String::new(),
+            exit_code: None,
+            duration_ms: 0,
+            error: Some("send_keys: broken pipe".to_string()),
+            terminal_state: None,
+            cursor: None,
+            pre_terminal_state: Some(json!("ready")),
+            refused: false,
+        };
+        let response = build_exec_response(&result);
+        assert_eq!(response["ok"], false);
+        // refused=false → "refused" field should be absent
+        assert!(response.get("refused").is_none());
+        assert_eq!(response["pre_terminal_state"], "ready");
+        assert!(response["terminal_state"].is_null());
+        assert!(response["error"].as_str().unwrap().contains("broken pipe"));
+        assert!(response["exit_code"].is_null());
+    }
+
+    // ── Command failed (non-zero exit, non-refused) ──
+    #[test]
+    fn test_exec_result_command_failed() {
+        let result = ExecResult {
+            ok: false,
+            output: "ls: cannot access '/nonexistent': No such file or directory".to_string(),
+            exit_code: Some(2),
+            duration_ms: 85,
+            error: None,
+            terminal_state: Some(json!("ready")),
+            cursor: Some(json!({"row": 1, "col": 0, "visible": true})),
+            pre_terminal_state: Some(json!("ready")),
+            refused: false,
+        };
+        let response = build_exec_response(&result);
+        assert_eq!(response["ok"], false);
+        assert!(response.get("refused").is_none());
+        assert_eq!(response["exit_code"], 2);
+        assert_eq!(response["pre_terminal_state"], "ready");
+    }
+}
