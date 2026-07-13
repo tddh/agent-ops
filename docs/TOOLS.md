@@ -297,7 +297,7 @@
 
 ### `exec`
 
-一站式命令执行。内部自动完成：清屏 → 发送命令 → 等待完成 → 捕获输出 → 清洗。
+一站式命令执行。内部自动完成：安全检查 → 清屏 → 发送命令 → 等待完成 → 捕获输出 → 清洗。
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|:---:|------|
@@ -309,11 +309,22 @@
 | `max_lines` | integer | | 默认 200，0=不限制 |
 | `clear_screen` | boolean | | 执行前是否清屏，默认 false |
 
-**返回** `{"ok": true, "output": "...", "exit_code": 0, "duration_ms": 70, "terminal_state": "ready", "cursor": {"row": 5, "col": 14, "visible": true}}`
+> **安全检查**：exec 执行前会检测终端状态。如果终端不在 `ready` 状态（如 vim、less、password prompt、REPL 等），exec 会拒绝执行并返回 `refused: true`。这是为了防止命令注入到非 shell 环境。
 
-超时：`{"ok": false, "output": "...", "exit_code": null, "error": "timeout...", "terminal_state": "running", "cursor": {"row": 5, "col": 0, "visible": true}}`
+**新增响应字段**：
+- `pre_terminal_state`：执行前检测到的终端状态（`ready` / `running` / `password` / `confirm` / `repl` / `editor` / `pager` / `unknown`）
+- `refused`：仅在被安全检查拒绝时出现，值为 `true`
 
-> `terminal_state` 和 `cursor` 仅在 bridge 支持时返回（向后兼容）。
+**成功返回** `{"ok": true, "output": "...", "exit_code": 0, "duration_ms": 70, "terminal_state": "ready", "pre_terminal_state": "ready", "cursor": {"row": 5, "col": 14, "visible": true}}`
+
+**超时返回**：`{"ok": false, "output": "...", "exit_code": null, "error": "timeout...", "terminal_state": "running", "pre_terminal_state": "ready", "cursor": {"row": 5, "col": 0, "visible": true}}`
+
+**安全检查拒绝**：
+```json
+{"ok": false, "refused": true, "error": "Terminal is in editor (vim/nano). Use send_keys to interact with editor, or exit editor first.", "pre_terminal_state": "editor"}
+```
+
+> `terminal_state`、`pre_terminal_state` 和 `cursor` 仅在 bridge 支持时返回（向后兼容）。
 
 ✅ 适用：一次性会自行退出的命令（`ls`、`cat`、`grep`、`systemctl`、`kubectl`、`apt-get`、`curl` 等）
 ❌ 不适用：交互式程序（`vim`、`htop`、`less`）、不自动退出的命令（`tail -f`、`nc -l`、`ping`）
