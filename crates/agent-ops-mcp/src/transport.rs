@@ -188,15 +188,13 @@ impl AsyncWrite for BridgeStream {
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         match &mut *self {
-            BridgeStream::Quic { send, .. } => {
-                match Pin::new(send).poll_write(cx, buf) {
-                    Poll::Ready(Ok(n)) => Poll::Ready(Ok(n)),
-                    Poll::Ready(Err(e)) => {
-                        Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, e)))
-                    }
-                    Poll::Pending => Poll::Pending,
+            BridgeStream::Quic { send, .. } => match Pin::new(send).poll_write(cx, buf) {
+                Poll::Ready(Ok(n)) => Poll::Ready(Ok(n)),
+                Poll::Ready(Err(e)) => {
+                    Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, e)))
                 }
-            }
+                Poll::Pending => Poll::Pending,
+            },
         }
     }
 
@@ -238,7 +236,10 @@ pub async fn connect_to_bridge_hybrid(
                 let delay = Duration::from_millis(500 * 2u64.pow(attempt));
                 tracing::warn!(
                     "QUIC connect failed (attempt {}/{}), retrying in {:?}: {}",
-                    attempt, max_retries, delay, e
+                    attempt,
+                    max_retries,
+                    delay,
+                    e
                 );
                 sleep(delay).await;
             }
@@ -247,7 +248,10 @@ pub async fn connect_to_bridge_hybrid(
     }
 }
 
-pub async fn send_json_frame<S: tokio::io::AsyncWriteExt + Unpin>(stream: &mut S, value: &serde_json::Value) -> anyhow::Result<()> {
+pub async fn send_json_frame<S: tokio::io::AsyncWriteExt + Unpin>(
+    stream: &mut S,
+    value: &serde_json::Value,
+) -> anyhow::Result<()> {
     let json_str = serde_json::to_string(value)?;
     let len = json_str.len() as u32;
     stream.write_all(&len.to_le_bytes()).await?;
@@ -256,12 +260,18 @@ pub async fn send_json_frame<S: tokio::io::AsyncWriteExt + Unpin>(stream: &mut S
     Ok(())
 }
 
-pub async fn recv_json_frame<S: tokio::io::AsyncReadExt + Unpin>(stream: &mut S) -> anyhow::Result<serde_json::Value> {
+pub async fn recv_json_frame<S: tokio::io::AsyncReadExt + Unpin>(
+    stream: &mut S,
+) -> anyhow::Result<serde_json::Value> {
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf).await?;
     let len = u32::from_le_bytes(len_buf) as usize;
     if len > agent_ops_core::MAX_FRAME_SIZE {
-        anyhow::bail!("frame too large: {} bytes (max {})", len, agent_ops_core::MAX_FRAME_SIZE);
+        anyhow::bail!(
+            "frame too large: {} bytes (max {})",
+            len,
+            agent_ops_core::MAX_FRAME_SIZE
+        );
     }
     let mut buf = vec![0u8; len];
     stream.read_exact(&mut buf).await?;
@@ -338,8 +348,11 @@ pub async fn connect_to_bridge_hybrid_stream(
     let mut attempt = 0;
     loop {
         match connect_to_bridge_quic_stream(
-            bridge_addr, auth_token, ca_cert_path,
-            idle_timeout_secs, keepalive_secs,
+            bridge_addr,
+            auth_token,
+            ca_cert_path,
+            idle_timeout_secs,
+            keepalive_secs,
         )
         .await
         {
@@ -352,7 +365,10 @@ pub async fn connect_to_bridge_hybrid_stream(
                 let delay = Duration::from_millis(500 * 2u64.pow(attempt));
                 tracing::warn!(
                     "QUIC stream connect failed (attempt {}/{}), retrying in {:?}: {}",
-                    attempt, max_retries, delay, e
+                    attempt,
+                    max_retries,
+                    delay,
+                    e
                 );
                 sleep(delay).await;
             }

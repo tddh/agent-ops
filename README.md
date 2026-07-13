@@ -123,6 +123,11 @@ Edit `~/.config/opencode/opencode.json` (see `config/mcp-config.example.json`):
 
 **Production**: Run your own CA, issue per-bridge certificates, MCP server holds only the CA root.
 
+**Built-in protections**:
+- **Path traversal prevention**: File upload/download rejects paths containing `..`
+- **Tunnel target whitelist**: Optional `allowed_tunnel_targets` in `hosts.yaml` restricts port forwarding targets (glob patterns)
+- **Exec safety check**: `exec` refuses execution when terminal is not in `ready` state (prevents command injection into vim/less/password prompts)
+
 ## Audit
 
 ```bash

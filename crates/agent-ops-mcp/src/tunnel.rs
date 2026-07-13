@@ -20,6 +20,32 @@ const STREAM_TUNNEL: u8 = 0x05;
 const TUNNEL_BUFFER_SIZE: usize = 65536;
 const MAX_HOST_LEN: usize = 253;
 
+fn check_tunnel_target(host: &HostConfig, remote_host: &str, remote_port: u16) -> Result<()> {
+    let targets = match &host.allowed_tunnel_targets {
+        Some(t) => t,
+        None => return Ok(()),
+    };
+
+    let target = format!("{}:{}", remote_host, remote_port);
+    let matched = targets.iter().any(|pattern| {
+        glob::Pattern::new(pattern)
+            .map(|p| p.matches(&target))
+            .unwrap_or(false)
+    });
+
+    if matched {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "tunnel target {}:{} not in allowed list for host '{}' (allowed: {:?})",
+            remote_host,
+            remote_port,
+            host.name,
+            targets
+        )
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct TunnelInfo {
     pub tunnel_id: String,
@@ -70,8 +96,14 @@ impl TunnelManager {
         ca_cert_path: &str,
     ) -> Result<TunnelInfo> {
         if remote_host.len() > MAX_HOST_LEN {
-            anyhow::bail!("remote host too long: {} (max {})", remote_host.len(), MAX_HOST_LEN);
+            anyhow::bail!(
+                "remote host too long: {} (max {})",
+                remote_host.len(),
+                MAX_HOST_LEN
+            );
         }
+
+        check_tunnel_target(host, &remote_host, remote_port)?;
 
         let bind_addr = format!("{}:{}", local_addr, local_port);
 
@@ -79,13 +111,10 @@ impl TunnelManager {
             .await
             .with_context(|| format!("failed to bind to {}", bind_addr))?;
 
-        let (conn, auth_send, auth_recv) = connect_to_bridge_quic_tunnel(
-            &host.bridge_addr,
-            &host.bridge_token,
-            ca_cert_path,
-        )
-        .await
-        .with_context(|| "failed to connect to bridge")?;
+        let (conn, auth_send, auth_recv) =
+            connect_to_bridge_quic_tunnel(&host.bridge_addr, &host.bridge_token, ca_cert_path)
+                .await
+                .with_context(|| "failed to connect to bridge")?;
 
         tokio::spawn(async move {
             let mut auth_send = auth_send;
@@ -170,7 +199,10 @@ impl TunnelManager {
             listener_task,
         };
 
-        self.tunnels.lock().await.insert(info.tunnel_id.clone(), tunnel);
+        self.tunnels
+            .lock()
+            .await
+            .insert(info.tunnel_id.clone(), tunnel);
 
         Ok(info)
     }
@@ -266,4 +298,52 @@ async fn handle_tunnel_connection(
     tokio::try_join!(tcp_to_quic, quic_to_tcp)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn make_host(targets: Option<Vec<String>>) -> HostConfig {
+        HostConfig {
+            name: "test-host".to_string(),
+            bridge_addr: "10.0.0.1:9778".to_string(),
+            bridge_token: "tok".to_string(),
+            group: "test".to_string(),
+            tags: vec![],
+            labels: HashMap::new(),
+            allowed_tunnel_targets: targets,
+        }
+    }
+
+    #[test]
+    fn test_no_targets_allows_all() {
+        let host = make_host(None);
+        assert!(check_tunnel_target(&host, "127.0.0.1", 22).is_ok());
+        assert!(check_tunnel_target(&host, "10.0.0.1", 3306).is_ok());
+    }
+
+    #[test]
+    fn test_exact_match() {
+        let host = make_host(Some(vec!["127.0.0.1:5432".to_string()]));
+        assert!(check_tunnel_target(&host, "127.0.0.1", 5432).is_ok());
+        assert!(check_tunnel_target(&host, "127.0.0.1", 3306).is_err());
+    }
+
+    #[test]
+    fn test_glob_match() {
+        let host = make_host(Some(vec!["10.0.1.*:*".to_string()]));
+        assert!(check_tunnel_target(&host, "10.0.1.20", 5432).is_ok());
+        assert!(check_tunnel_target(&host, "10.0.1.100", 80).is_ok());
+        assert!(check_tunnel_target(&host, "10.0.2.1", 80).is_err());
+    }
+
+    #[test]
+    fn test_port_glob() {
+        let host = make_host(Some(vec!["*:3306".to_string()]));
+        assert!(check_tunnel_target(&host, "10.0.1.20", 3306).is_ok());
+        assert!(check_tunnel_target(&host, "127.0.0.1", 3306).is_ok());
+        assert!(check_tunnel_target(&host, "127.0.0.1", 5432).is_err());
+    }
 }

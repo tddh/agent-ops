@@ -42,13 +42,14 @@ async fn main() -> anyhow::Result<()> {
     let quic_conn_limit_pre = conn_limit.clone();
     tokio::spawn(async move {
         let conn_limit = quic_conn_limit_pre;
-        let tls_cfg = match tls::load_quic_server_config(&quic_config.tls_cert, &quic_config.tls_key) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::error!("failed to load QUIC TLS config: {}", e);
-                return;
-            }
-        };
+        let tls_cfg =
+            match tls::load_quic_server_config(&quic_config.tls_cert, &quic_config.tls_key) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("failed to load QUIC TLS config: {}", e);
+                    return;
+                }
+            };
         let quic_addr: SocketAddr = match quic_config.quic_listen_addr.parse() {
             Ok(a) => a,
             Err(e) => {
@@ -99,7 +100,9 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
-                if let Err(e) = auth::authenticate_quic(&mut auth_send, &mut auth_recv, &token).await {
+                if let Err(e) =
+                    auth::authenticate_quic(&mut auth_send, &mut auth_recv, &token).await
+                {
                     tracing::warn!("QUIC auth failed: {}", e);
                     return;
                 }
@@ -112,9 +115,8 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
-                let session_state: std::sync::Arc<
-                    tokio::sync::Mutex<Option<InteractiveSession>>,
-                > = std::sync::Arc::new(tokio::sync::Mutex::new(None));
+                let session_state: std::sync::Arc<tokio::sync::Mutex<Option<InteractiveSession>>> =
+                    std::sync::Arc::new(tokio::sync::Mutex::new(None));
 
                 loop {
                     match conn.accept_bi().await {

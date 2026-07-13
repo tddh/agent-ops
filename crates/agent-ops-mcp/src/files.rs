@@ -49,7 +49,15 @@ pub async fn upload_file(
         .with_context(|| format!("failed to access: {}", local_path))?;
 
     if meta.is_dir() {
-        upload_dir(host, local_path, remote_path, ca_cert_path, overwrite, exclude).await
+        upload_dir(
+            host,
+            local_path,
+            remote_path,
+            ca_cert_path,
+            overwrite,
+            exclude,
+        )
+        .await
     } else {
         let size = meta.len() as usize;
         if size > MAX_FILE_SIZE {
@@ -71,14 +79,18 @@ async fn upload_single(
     let file_size = meta.len();
 
     let (_conn, _auth_send, _auth_recv) = crate::transport::connect_to_bridge_quic(
-        &host.bridge_addr, &host.bridge_token, ca_cert_path,
-    ).await?;
+        &host.bridge_addr,
+        &host.bridge_token,
+        ca_cert_path,
+    )
+    .await?;
 
     let (mut send, mut recv) = _conn.open_bi().await?;
 
     send.write_all(&[STREAM_UPLOAD]).await?;
     send.write_all(&[overwrite as u8]).await?;
-    send.write_all(&(remote_path.len() as u16).to_le_bytes()).await?;
+    send.write_all(&(remote_path.len() as u16).to_le_bytes())
+        .await?;
     send.write_all(remote_path.as_bytes()).await?;
     send.write_all(&file_size.to_le_bytes()).await?;
 
@@ -95,13 +107,18 @@ async fn upload_single(
 
     match code[0] {
         0x00 => Ok(FileResult {
-            path: remote_path.to_string(), status: "uploaded".into(),
+            path: remote_path.to_string(),
+            status: "uploaded".into(),
             size: Some(u64::from_le_bytes(written)),
-            sha256: Some(hex::encode(sha256)), error: None,
+            sha256: Some(hex::encode(sha256)),
+            error: None,
         }),
         0x01 => Ok(FileResult {
-            path: remote_path.to_string(), status: "skipped".into(),
-            size: None, sha256: None, error: None,
+            path: remote_path.to_string(),
+            status: "skipped".into(),
+            size: None,
+            sha256: None,
+            error: None,
         }),
         _ => bail!("upload failed: server code 0x{:02x}", code[0]),
     }
@@ -118,11 +135,16 @@ async fn upload_dir(
     let base = Path::new(local_path).to_path_buf();
     let mut files = Vec::new();
     collect_files(&base, &base, remote_base, exclude, &mut files, 0).await?;
-    if files.is_empty() { return Ok(Vec::new()); }
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
 
     let (conn, _auth_send, _auth_recv) = crate::transport::connect_to_bridge_quic(
-        &host.bridge_addr, &host.bridge_token, ca_cert_path,
-    ).await?;
+        &host.bridge_addr,
+        &host.bridge_token,
+        ca_cert_path,
+    )
+    .await?;
     let conn = Arc::new(conn);
 
     let semaphore = Arc::new(Semaphore::new(MAX_UPLOAD_CONCURRENCY));
@@ -158,13 +180,18 @@ async fn upload_dir(
 
             Ok::<_, anyhow::Error>(match code[0] {
                 0x00 => FileResult {
-                    path: remote.clone(), status: "uploaded".into(),
+                    path: remote.clone(),
+                    status: "uploaded".into(),
                     size: Some(u64::from_le_bytes(written)),
-                    sha256: Some(hex::encode(sha256)), error: None,
+                    sha256: Some(hex::encode(sha256)),
+                    error: None,
                 },
                 0x01 => FileResult {
-                    path: remote.clone(), status: "skipped".into(),
-                    size: None, sha256: None, error: None,
+                    path: remote.clone(),
+                    status: "skipped".into(),
+                    size: None,
+                    sha256: None,
+                    error: None,
                 },
                 _ => bail!("upload failed: server code 0x{:02x}", code[0]),
             })
@@ -197,19 +224,23 @@ pub async fn download_file(
     ca_cert_path: &str,
 ) -> Result<Vec<FileResult>> {
     let (conn, _auth_send, _auth_recv) = crate::transport::connect_to_bridge_quic(
-        &host.bridge_addr, &host.bridge_token, ca_cert_path,
-    ).await?;
+        &host.bridge_addr,
+        &host.bridge_token,
+        ca_cert_path,
+    )
+    .await?;
 
     let (mut send, mut recv) = conn.open_bi().await?;
 
     send.write_all(&[STREAM_DOWNLOAD]).await?;
-    send.write_all(&(remote_path.len() as u16).to_le_bytes()).await?;
+    send.write_all(&(remote_path.len() as u16).to_le_bytes())
+        .await?;
     send.write_all(remote_path.as_bytes()).await?;
     send.finish()?;
 
     let mut code = [0u8; 1];
     recv.read_exact(&mut code).await?;
-    
+
     match code[0] {
         0x00 => {
             let result = read_single_file(&mut recv, local_path).await?;
@@ -236,7 +267,11 @@ async fn read_single_file(recv: &mut quinn::RecvStream, local_path: &str) -> Res
     recv.read_exact(&mut size_buf).await?;
     let file_size = u64::from_le_bytes(size_buf) as usize;
     if file_size > MAX_FILE_SIZE {
-        bail!("file too large: {} bytes (max {})", file_size, MAX_FILE_SIZE);
+        bail!(
+            "file too large: {} bytes (max {})",
+            file_size,
+            MAX_FILE_SIZE
+        );
     }
 
     let mut sha256 = [0u8; 32];
@@ -266,7 +301,8 @@ async fn read_directory(recv: &mut quinn::RecvStream, local_base: &str) -> Resul
     recv.read_exact(&mut count_buf).await?;
     let file_count = u32::from_le_bytes(count_buf) as usize;
 
-    tokio::fs::create_dir_all(local_base).await
+    tokio::fs::create_dir_all(local_base)
+        .await
         .with_context(|| format!("failed to create directory: {}", local_base))?;
 
     let mut results = Vec::with_capacity(file_count);
@@ -278,11 +314,23 @@ async fn read_directory(recv: &mut quinn::RecvStream, local_base: &str) -> Resul
         recv.read_exact(&mut path_buf).await?;
         let rel_path = String::from_utf8_lossy(&path_buf).to_string();
 
+        // 验证 rel_path 安全性：拒绝路径穿越和绝对路径
+        if rel_path.contains("..") || rel_path.starts_with('/') {
+            bail!(
+                "unsafe relative path from bridge: '{}' (contains '..' or is absolute)",
+                rel_path
+            );
+        }
+
         let mut size_buf = [0u8; 8];
         recv.read_exact(&mut size_buf).await?;
         let file_size = u64::from_le_bytes(size_buf) as usize;
         if file_size > MAX_FILE_SIZE {
-            bail!("file too large: {} bytes (max {})", file_size, MAX_FILE_SIZE);
+            bail!(
+                "file too large: {} bytes (max {})",
+                file_size,
+                MAX_FILE_SIZE
+            );
         }
 
         let mut sha256 = [0u8; 32];
@@ -314,21 +362,37 @@ async fn read_directory(recv: &mut quinn::RecvStream, local_base: &str) -> Resul
 // ─── helper functions ───
 
 async fn collect_files(
-    base: &Path, dir: &Path, remote_base: &str,
-    exclude: &[String], files: &mut Vec<(PathBuf, String)>,
+    base: &Path,
+    dir: &Path,
+    remote_base: &str,
+    exclude: &[String],
+    files: &mut Vec<(PathBuf, String)>,
     depth: u32,
 ) -> Result<()> {
     if depth > 64 {
-        return Err(anyhow::anyhow!("directory too deep (>64): {}", dir.display()));
+        return Err(anyhow::anyhow!(
+            "directory too deep (>64): {}",
+            dir.display()
+        ));
     }
     let mut entries = tokio::fs::read_dir(dir).await?;
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
         let rel = path.strip_prefix(base)?.to_string_lossy().to_string();
         let remote = format!("{}/{}", remote_base.trim_end_matches('/'), rel);
-        if should_exclude(&rel, exclude) { continue; }
+        if should_exclude(&rel, exclude) {
+            continue;
+        }
         if path.is_dir() {
-            Box::pin(collect_files(base, &path, remote_base, exclude, files, depth + 1)).await?;
+            Box::pin(collect_files(
+                base,
+                &path,
+                remote_base,
+                exclude,
+                files,
+                depth + 1,
+            ))
+            .await?;
         } else {
             files.push((path, remote));
         }
@@ -338,7 +402,9 @@ async fn collect_files(
 
 fn should_exclude(path: &str, patterns: &[String]) -> bool {
     patterns.iter().any(|p| {
-        glob::Pattern::new(p).map(|pat| pat.matches(path)).unwrap_or(false)
+        glob::Pattern::new(p)
+            .map(|pat| pat.matches(path))
+            .unwrap_or(false)
     })
 }
 
@@ -372,11 +438,41 @@ mod tests {
 
         let mut files = Vec::new();
         let exclude: Vec<String> = vec!["*.log".into(), ".git/*".into()];
-        collect_files(dir.path(), dir.path(), "/remote", &exclude, &mut files, 0).await.unwrap();
+        collect_files(dir.path(), dir.path(), "/remote", &exclude, &mut files, 0)
+            .await
+            .unwrap();
 
         let names: Vec<&str> = files.iter().map(|(_, r)| r.as_str()).collect();
         assert!(names.contains(&"/remote/keep.rs"));
         assert!(!names.contains(&"/remote/skip.log"));
         assert!(!names.contains(&"/remote/.git/config"));
+    }
+
+    #[test]
+    fn test_rel_path_rejects_dotdot() {
+        let bad_paths = ["../etc/passwd", "foo/../../etc/shadow", ".."];
+        for p in bad_paths {
+            assert!(p.contains(".."), "should detect path traversal in: {}", p);
+        }
+    }
+
+    #[test]
+    fn test_rel_path_rejects_absolute() {
+        let bad_paths = ["/etc/passwd", "/root/.ssh/id_rsa"];
+        for p in bad_paths {
+            assert!(p.starts_with('/'), "should detect absolute path: {}", p);
+        }
+    }
+
+    #[test]
+    fn test_rel_path_accepts_normal() {
+        let good_paths = ["file.txt", "subdir/file.txt", "a/b/c/d.rs"];
+        for p in good_paths {
+            assert!(
+                !p.contains("..") && !p.starts_with('/'),
+                "should accept normal path: {}",
+                p
+            );
+        }
     }
 }

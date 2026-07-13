@@ -129,8 +129,11 @@ pub async fn handle_interactive_control(
         let msg_type = match msg_result {
             Some(Ok(t)) => t,
             Some(Err(_)) | None => {
-                if let Some(exit_code) =
-                    session_state.lock().await.as_ref().and_then(|s| s.exit_code)
+                if let Some(exit_code) = session_state
+                    .lock()
+                    .await
+                    .as_ref()
+                    .and_then(|s| s.exit_code)
                 {
                     write_process_exited(&mut send, exit_code).await?;
                     tracing::info!(
@@ -151,7 +154,7 @@ pub async fn handle_interactive_control(
             0x02 => {
                 let new_cols = u16::from_le_bytes([payload[0], payload[1]]);
                 let new_rows = u16::from_le_bytes([payload[2], payload[3]]);
-                
+
                 let state = session_state.lock().await;
                 if let Some(master_fd) = state.as_ref().and_then(|s| s.master_fd.as_ref()) {
                     let winsize = libc::winsize {
@@ -165,7 +168,7 @@ pub async fn handle_interactive_control(
                     }
                     tracing::debug!("resize PTY: {}x{}", new_cols, new_rows);
                 }
-                
+
                 pane.resize(TerminalSizeSpec::new(new_cols, new_rows))
                     .await?;
             }
@@ -200,10 +203,7 @@ pub async fn handle_interactive_data(
         let timeout = std::time::Duration::from_secs(30);
         loop {
             if let Some(info) = session_state.lock().await.as_ref() {
-                break (
-                    info.session_name.clone(),
-                    info.socket_path.clone(),
-                );
+                break (info.session_name.clone(), info.socket_path.clone());
             }
             if start.elapsed() > timeout {
                 anyhow::bail!("timeout waiting for control stream (0x06) to attach");
@@ -244,7 +244,7 @@ pub async fn handle_interactive_data(
     }
 
     let master_fd = unsafe { OwnedFd::from_raw_fd(master) };
-    
+
     {
         let mut state = session_state.lock().await;
         if let Some(ref mut s) = *state {
@@ -288,7 +288,13 @@ pub async fn handle_interactive_data(
     if flags == -1 {
         anyhow::bail!("fcntl F_GETFL failed: {}", std::io::Error::last_os_error());
     }
-    let ret = unsafe { libc::fcntl(master_fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) };
+    let ret = unsafe {
+        libc::fcntl(
+            master_fd.as_raw_fd(),
+            libc::F_SETFL,
+            flags | libc::O_NONBLOCK,
+        )
+    };
     if ret == -1 {
         anyhow::bail!("fcntl F_SETFL failed: {}", std::io::Error::last_os_error());
     }
@@ -302,7 +308,7 @@ pub async fn handle_interactive_data(
             if n == 0 {
                 break;
             }
-            
+
             let mut written = 0;
             while written < n {
                 let mut guard = async_fd.writable().await?;
@@ -349,7 +355,7 @@ pub async fn handle_interactive_data(
                     Ok(ret as usize)
                 }
             });
-            
+
             match result {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => {
@@ -420,7 +426,8 @@ async fn write_attached(send: &mut SendStream, scrollback: &[u8]) -> Result<()> 
     send.write_all(&[0x81]).await?;
     let payload_len = 4 + scrollback.len();
     send.write_all(&(payload_len as u16).to_le_bytes()).await?;
-    send.write_all(&(scrollback.len() as u32).to_le_bytes()).await?;
+    send.write_all(&(scrollback.len() as u32).to_le_bytes())
+        .await?;
     send.write_all(scrollback).await?;
     Ok(())
 }
@@ -430,7 +437,8 @@ async fn write_error(send: &mut SendStream, code: u8, message: &str) -> Result<(
     let payload_len = 1 + 2 + message.len();
     send.write_all(&(payload_len as u16).to_le_bytes()).await?;
     send.write_all(&[code]).await?;
-    send.write_all(&(message.len() as u16).to_le_bytes()).await?;
+    send.write_all(&(message.len() as u16).to_le_bytes())
+        .await?;
     send.write_all(message.as_bytes()).await?;
     Ok(())
 }

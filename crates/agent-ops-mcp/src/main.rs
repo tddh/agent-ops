@@ -56,12 +56,13 @@ async fn main() -> anyhow::Result<()> {
     }
     // quinn needs explicit crypto provider in musl builds
     let _ = rustls::crypto::ring::default_provider().install_default();
-    tracing_subscriber::fmt().with_writer(std::io::stderr).init();
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .init();
     let cli = Cli::parse();
 
     let router = Arc::new(
-        router::HostRouter::from_file(&cli.hosts_file)
-            .context("failed to load host registry")?,
+        router::HostRouter::from_file(&cli.hosts_file).context("failed to load host registry")?,
     );
     tracing::info!("loaded {} hosts", router.len());
 
@@ -305,7 +306,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "file_upload",
-                "description": "Upload files/directories to remote host. Auto-creates target dirs. overwrite: overwrite(default)|skip|rename|error. exclude: glob patterns. ⚠️ Do NOT add exclude/overwrite unless user explicitly requests.",
+                "description": "Upload files/directories to remote host via QUIC. Auto-creates target dirs. overwrite: overwrite(default)|skip|rename|error. exclude: glob patterns. Paths containing '..' are rejected by the bridge (path traversal protection). ⚠️ Do NOT add exclude/overwrite unless user explicitly requests.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -320,7 +321,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "file_download",
-                "description": "Download a file or directory from remote host. Auto-detects path type: single file downloads directly; directory recursively downloads all files preserving structure. Returns size and SHA256 for files, or file list for directories. ⚠️ Do NOT modify paths or add filters unless user explicitly requests.",
+                "description": "Download a file or directory from remote host via QUIC. Auto-detects path type: single file downloads directly; directory recursively downloads all files preserving structure. Returns size and SHA256 for files, or file list for directories. Paths containing '..' are rejected by the bridge; MCP validates relative paths from bridge. ⚠️ Do NOT modify paths or add filters unless user explicitly requests.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -638,7 +639,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "tunnel_create",
-                "description": "Create a local port forwarding tunnel to access remote services through an encrypted QUIC channel. Opens a local TCP listener on the specified port that forwards all connections to a remote host:port via the bridge. The remote_host can be an internal address (e.g., 127.0.0.1, 10.x.x.x) not directly reachable from your machine. Use this to access databases, internal APIs, admin panels, or any TCP service running on remote hosts. Returns a tunnel_id that can be used with tunnel_close. Tunnels persist until explicitly closed or the MCP server restarts.",
+                "description": "Create a local port forwarding tunnel to access remote services through an encrypted QUIC channel. Opens a local TCP listener on the specified port that forwards all connections to a remote host:port via the bridge. The remote_host can be an internal address (e.g., 127.0.0.1, 10.x.x.x) not directly reachable from your machine. If the host has 'allowed_tunnel_targets' configured in hosts.yaml, only matching targets are allowed (glob patterns supported). Returns a tunnel_id that can be used with tunnel_close. Tunnels persist until explicitly closed or the MCP server restarts.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -986,9 +987,12 @@ async fn run_mcp_stdio_loop(ctx: Arc<tools::ToolContext>, tools_def: Value) -> a
                 let tool_name = request["params"]["name"].as_str().unwrap_or("");
                 let args = request["params"]["arguments"].clone();
                 match tools::execute_tool(&ctx, tool_name, args).await {
-                    Ok(result) => json_rpc_response(id, &json!({
-                        "content": [{ "type": "text", "text": result.to_string() }]
-                    })),
+                    Ok(result) => json_rpc_response(
+                        id,
+                        &json!({
+                            "content": [{ "type": "text", "text": result.to_string() }]
+                        }),
+                    ),
                     Err(e) => json_rpc_error(id, -32000, &format!("Tool error: {e}")),
                 }
             }
@@ -998,12 +1002,15 @@ async fn run_mcp_stdio_loop(ctx: Arc<tools::ToolContext>, tools_def: Value) -> a
                     .unwrap_or("unknown")
                     .to_string();
                 *ctx.agent_name.lock().unwrap_or_else(|e| e.into_inner()) = agent_name;
-                json_rpc_response(id, &json!({
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": { "tools": {} },
-                    "serverInfo": { "name": "agent-ops-mcp", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "You are an AI agent managing remote Linux hosts via agent-ops. 你是通过 agent-ops 运维远程主机的 AI Agent。\n\n## Rules\n1. If a host is in the agent-ops registry (`host_list`), ALL operations MUST use agent-ops tools. NEVER run ssh/scp/rsync directly.\n2. Default session: `\"agent-ops\"`. Always `session_attach` first; `session_create` if not found.\n3. File transfer: `file_upload` / `file_download`. Commands: `exec` for one-shot (auto-waits, default 200 lines / 30s timeout, set `max_lines=0` for everything), `send_keys` for interactive programs.\n4. Use `wait_for_text` to block until a pattern appears — do NOT poll `capture_pane` in a loop.\n5. For long-running commands (tail -f, builds), use `stream_pane` for incremental output instead of polling `capture_pane`. `session_attach`/`session_detach` only check existence, they don't attach/detach.\n\n## Workflow\n`host_list` → `session_attach host=<h> session_name=\"agent-ops\"` (or `session_create`) → `exec`/`send_keys` → `capture_pane`/`wait_for_text` → `close_pane` to clean up.\n- Default pane after session_create: `%0`.\n- `exec` supports `clear_screen: true` and `timeout_ms` for long commands.\n- After closing a pane: `respawn_pane` to restart the shell.\n- `cmd_escape` for direct rmux CLI access (advanced)."
-                }))
+                json_rpc_response(
+                    id,
+                    &json!({
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": { "tools": {} },
+                        "serverInfo": { "name": "agent-ops-mcp", "version": env!("CARGO_PKG_VERSION") },
+                        "instructions": "You are an AI agent managing remote Linux hosts via agent-ops. 你是通过 agent-ops 运维远程主机的 AI Agent。\n\n## Rules\n1. If a host is in the agent-ops registry (`host_list`), ALL operations MUST use agent-ops tools. NEVER run ssh/scp/rsync directly.\n2. Default session: `\"agent-ops\"`. Always `session_attach` first; `session_create` if not found.\n3. File transfer: `file_upload` / `file_download`. Commands: `exec` for one-shot (auto-waits, default 200 lines / 30s timeout, set `max_lines=0` for everything), `send_keys` for interactive programs.\n4. Use `wait_for_text` to block until a pattern appears — do NOT poll `capture_pane` in a loop.\n5. For long-running commands (tail -f, builds), use `stream_pane` for incremental output instead of polling `capture_pane`. `session_attach`/`session_detach` only check existence, they don't attach/detach.\n\n## Workflow\n`host_list` → `session_attach host=<h> session_name=\"agent-ops\"` (or `session_create`) → `exec`/`send_keys` → `capture_pane`/`wait_for_text` → `close_pane` to clean up.\n- Default pane after session_create: `%0`.\n- `exec` supports `clear_screen: true` and `timeout_ms` for long commands.\n- After closing a pane: `respawn_pane` to restart the shell.\n- `cmd_escape` for direct rmux CLI access (advanced)."
+                    }),
+                )
             }
             _ => json_rpc_error(id, -32601, &format!("Method not found: {method}")),
         };
@@ -1064,11 +1071,20 @@ async fn run_audit_command() -> anyhow::Result<()> {
     }
 
     let cli = AuditCli::parse_from(
-        std::iter::once("agent-ops-mcp".to_string())
-            .chain(std::env::args().skip(2)),
+        std::iter::once("agent-ops-mcp".to_string()).chain(std::env::args().skip(2)),
     );
     match cli.command {
-        AuditCommand::Query { db, host, action, agent, since, until, success, limit, format } => {
+        AuditCommand::Query {
+            db,
+            host,
+            action,
+            agent,
+            since,
+            until,
+            success,
+            limit,
+            format,
+        } => {
             let db_path = resolve_audit_db_path(db);
             let audit_db = audit::AuditDb::open(&db_path)?;
             let fmt = match format.as_str() {
@@ -1077,7 +1093,13 @@ async fn run_audit_command() -> anyhow::Result<()> {
                 _ => audit::query::OutputFormat::Table,
             };
             let params = audit::query::QueryParams {
-                host, action, agent, since, until, success, limit: Some(limit),
+                host,
+                action,
+                agent,
+                since,
+                until,
+                success,
+                limit: Some(limit),
             };
             let result = audit_db.query(params, fmt).await?;
             println!("{}", result);
@@ -1088,7 +1110,11 @@ async fn run_audit_command() -> anyhow::Result<()> {
             let result = audit_db.stats(since).await?;
             println!("{}", result);
         }
-        AuditCommand::Cleanup { db, older_than, max_size } => {
+        AuditCommand::Cleanup {
+            db,
+            older_than,
+            max_size,
+        } => {
             let db_path = resolve_audit_db_path(db);
             let audit_db = audit::AuditDb::open(&db_path)?;
             let days = older_than.unwrap_or(90);

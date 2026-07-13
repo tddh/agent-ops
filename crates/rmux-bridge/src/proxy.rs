@@ -35,7 +35,11 @@ where
 
     loop {
         if let Err(e) = reader.read_exact(&mut len_buf).await {
-            tracing::debug!("client disconnected after {} request(s): {}", handled as u32, e);
+            tracing::debug!(
+                "client disconnected after {} request(s): {}",
+                handled as u32,
+                e
+            );
             break;
         }
         let len = u32::from_le_bytes(len_buf) as usize;
@@ -48,7 +52,10 @@ where
         let mut buf = vec![0u8; len];
         if let Err(e) = reader.read_exact(&mut buf).await {
             if handled {
-                tracing::debug!("client disconnected during frame body read after {} request(s)", handled as u32);
+                tracing::debug!(
+                    "client disconnected during frame body read after {} request(s)",
+                    handled as u32
+                );
             } else {
                 tracing::warn!("frame read body error: {e}");
             }
@@ -190,7 +197,18 @@ where
                 let alternate = request["alternate"].as_bool();
                 let buffer_name = request["buffer_name"].as_str().map(String::from);
                 protocol_proxy
-                    .handle_capture_pane(sn, pane_id, max_lines, ansi, start_line, end_line, join_wrapped, preserve_spaces, alternate, buffer_name)
+                    .handle_capture_pane(
+                        sn,
+                        pane_id,
+                        max_lines,
+                        ansi,
+                        start_line,
+                        end_line,
+                        join_wrapped,
+                        preserve_spaces,
+                        alternate,
+                        buffer_name,
+                    )
                     .await
             }
             "wait_for_text" => {
@@ -240,7 +258,9 @@ where
                 let pane_id = request["pane_id"].as_str().unwrap_or("");
                 let command = request["command"].as_str().map(String::from);
                 let args: Option<Vec<String>> = request["args"].as_array().map(|a| {
-                    a.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
                 });
                 let shell = request["shell"].as_bool();
                 let cwd = request["cwd"].as_str().map(String::from);
@@ -248,7 +268,17 @@ where
                 let kill = request["kill"].as_bool();
                 let keep_alive_on_exit = request["keep_alive_on_exit"].as_bool();
                 protocol_proxy
-                    .handle_respawn_pane(sn, pane_id, command, args, shell, cwd, env, kill, keep_alive_on_exit)
+                    .handle_respawn_pane(
+                        sn,
+                        pane_id,
+                        command,
+                        args,
+                        shell,
+                        cwd,
+                        env,
+                        kill,
+                        keep_alive_on_exit,
+                    )
                     .await
             }
             "broadcast_keys" => {
@@ -350,7 +380,9 @@ where
                     .transpose()?;
                 let h = request["height"]
                     .as_u64()
-                    .map(|v| u16::try_from(v).map_err(|_| anyhow::anyhow!("height must be 0-65535")))
+                    .map(|v| {
+                        u16::try_from(v).map_err(|_| anyhow::anyhow!("height must be 0-65535"))
+                    })
                     .transpose()?;
                 protocol_proxy.handle_resize_window(sn, idx, w, h).await
             }
@@ -405,7 +437,9 @@ where
                 let sn = request["session_name"].as_str().unwrap_or("");
                 let pane_id = request["pane_id"].as_str().unwrap_or("");
                 let buffer_name = request["buffer_name"].as_str().unwrap_or("");
-                protocol_proxy.handle_paste_buffer(sn, pane_id, buffer_name).await
+                protocol_proxy
+                    .handle_paste_buffer(sn, pane_id, buffer_name)
+                    .await
             }
             "delete_buffer" => {
                 let buffer_name = request["buffer_name"].as_str().unwrap_or("");
@@ -430,7 +464,18 @@ where
                 let title = request["title"].as_str().map(String::from);
                 let keep_alive_on_exit = request["keep_alive_on_exit"].as_bool();
                 protocol_proxy
-                    .handle_split_pane_with(sn, pane_id, direction, command, &args, shell, cwd, env, title, keep_alive_on_exit)
+                    .handle_split_pane_with(
+                        sn,
+                        pane_id,
+                        direction,
+                        command,
+                        &args,
+                        shell,
+                        cwd,
+                        env,
+                        title,
+                        keep_alive_on_exit,
+                    )
                     .await
             }
             "get_pane_by_title" => {
@@ -586,10 +631,7 @@ impl AsyncWrite for QuicStreamAdapter {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         Pin::new(&mut self.send).poll_shutdown(cx)
     }
 }

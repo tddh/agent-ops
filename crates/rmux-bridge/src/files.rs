@@ -6,6 +6,21 @@ use crate::interactive::InteractiveSession;
 
 const CHUNK_SIZE: usize = 1024 * 1024; // 1 MB pipeline buffer
 
+/// 检查文件路径安全性：拒绝 null byte 和路径穿越（`..`）。
+/// 合法路径直接放行，不做规范化 — 运维工具需要完整文件系统访问。
+fn sanitize_path(raw: &str) -> anyhow::Result<String> {
+    if raw.contains('\0') {
+        anyhow::bail!("path contains null byte");
+    }
+
+    if raw.contains("..") {
+        anyhow::bail!("path traversal rejected: '{}'", raw);
+    }
+
+    tracing::info!(operation = "file_access", path = raw, "file access");
+    Ok(raw.to_string())
+}
+
 // ─── QUIC stream handlers ───
 
 /// QUIC stream dispatcher: read stream type byte, route to handler.
@@ -26,17 +41,19 @@ pub async fn handle_quic_stream(
         0x02 => handle_upload_quic(send, recv).await,
         0x03 => handle_download_quic(send, recv).await,
         0x05 => handle_tunnel_quic(send, recv).await,
-        0x06 => crate::interactive::handle_interactive_control(
-            send,
-            recv,
-            protocol_proxy.clone(),
-            session_state.clone(),
-        )
-        .await,
-        0x07 => crate::interactive::handle_interactive_data(
-            send, recv, protocol_proxy, session_state,
-        )
-        .await,
+        0x06 => {
+            crate::interactive::handle_interactive_control(
+                send,
+                recv,
+                protocol_proxy.clone(),
+                session_state.clone(),
+            )
+            .await
+        }
+        0x07 => {
+            crate::interactive::handle_interactive_data(send, recv, protocol_proxy, session_state)
+                .await
+        }
         t => {
             tracing::warn!("unknown QUIC stream type: 0x{:02x}", t);
             Ok(())
@@ -57,7 +74,7 @@ async fn handle_upload_quic(
     let path_len = u16::from_le_bytes(path_len_buf) as usize;
     let mut path = vec![0u8; path_len];
     recv.read_exact(&mut path).await?;
-    let mut remote_path = String::from_utf8_lossy(&path).to_string();
+    let mut remote_path = sanitize_path(&String::from_utf8_lossy(&path))?;
 
     let mut size_buf = [0u8; 8];
     recv.read_exact(&mut size_buf).await?;
@@ -137,7 +154,7 @@ async fn handle_download_quic(
     let path_len = u16::from_le_bytes(path_len_buf) as usize;
     let mut path = vec![0u8; path_len];
     recv.read_exact(&mut path).await?;
-    let remote_path = String::from_utf8_lossy(&path).to_string();
+    let remote_path = sanitize_path(&String::from_utf8_lossy(&path))?;
 
     let meta = match tokio::fs::metadata(&remote_path).await {
         Ok(m) => m,
@@ -167,7 +184,9 @@ async fn download_file_quic(mut send: quinn::SendStream, remote_path: &str) -> a
     let mut buf = vec![0u8; CHUNK_SIZE];
     loop {
         let n = file.read(&mut buf).await?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         hasher.update(&buf[..n]);
     }
     let hash: [u8; 32] = hasher.finalize().into();
@@ -192,7 +211,8 @@ async fn download_dir_quic(mut send: quinn::SendStream, remote_path: &str) -> an
     send.write_all(&(files.len() as u32).to_le_bytes()).await?;
 
     for (abs_path, rel_path) in &files {
-        send.write_all(&(rel_path.len() as u16).to_le_bytes()).await?;
+        send.write_all(&(rel_path.len() as u16).to_le_bytes())
+            .await?;
         send.write_all(rel_path.as_bytes()).await?;
 
         let mut file = tokio::fs::File::open(abs_path).await?;
@@ -202,7 +222,9 @@ async fn download_dir_quic(mut send: quinn::SendStream, remote_path: &str) -> an
         let mut buf = vec![0u8; CHUNK_SIZE];
         loop {
             let n = file.read(&mut buf).await?;
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             hasher.update(&buf[..n]);
         }
         let hash: [u8; 32] = hasher.finalize().into();
@@ -215,7 +237,11 @@ async fn download_dir_quic(mut send: quinn::SendStream, remote_path: &str) -> an
     }
 
     send.finish()?;
-    tracing::info!("QUIC downloaded directory {} ({} files)", remote_path, files.len());
+    tracing::info!(
+        "QUIC downloaded directory {} ({} files)",
+        remote_path,
+        files.len()
+    );
     Ok(())
 }
 
@@ -302,4 +328,34 @@ async fn handle_tunnel_quic(
 
     tracing::info!("QUIC tunnel closed: {}", target);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_path_rejects_null_byte() {
+        assert!(sanitize_path("/tmp/foo\0bar").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_path_rejects_dotdot() {
+        assert!(sanitize_path("/tmp/../etc/passwd").is_err());
+        assert!(sanitize_path("../etc/shadow").is_err());
+        assert!(sanitize_path("/tmp/../../../etc/passwd").is_err());
+        assert!(sanitize_path("foo/..").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_path_absolute() {
+        let result = sanitize_path("/tmp").unwrap();
+        assert_eq!(result, "/tmp");
+    }
+
+    #[test]
+    fn test_sanitize_path_nonexistent_file() {
+        let result = sanitize_path("/tmp/nonexistent-file-xyz-123.txt").unwrap();
+        assert_eq!(result, "/tmp/nonexistent-file-xyz-123.txt");
+    }
 }

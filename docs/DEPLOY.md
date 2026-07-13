@@ -182,6 +182,11 @@ hosts:
     labels:                             # 键值对标签
       dc: shanghai
       rack: a3
+    # 可选：限制隧道目标（不配置 = 全部允许）
+    # allowed_tunnel_targets:
+    #   - "127.0.0.1:5432"             # 精确匹配
+    #   - "10.0.1.*:*"                 # glob 通配符
+    #   - "*:3306"                     # 所有主机的 MySQL
 ```
 
 ### 8. 配置 MCP Server（OpenCode）

@@ -98,7 +98,11 @@ impl StreamManager {
             .await
             .with_context(|| format!("failed to connect to bridge for stream: {}", host.name))?;
 
-            tracing::info!("stream_pane: connected, sending stream_subscribe for session={} pane={}", session_name, pane_id);
+            tracing::info!(
+                "stream_pane: connected, sending stream_subscribe for session={} pane={}",
+                session_name,
+                pane_id
+            );
             send_json_frame(
                 &mut tls,
                 &json!({
@@ -115,11 +119,7 @@ impl StreamManager {
                 .await
                 .with_context(|| "failed to receive stream_subscribe ack")?;
             tracing::info!("stream_pane: received ack: {:?}", ack);
-            if !ack
-                .get("ok")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            {
+            if !ack.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
                 let err = ack
                     .get("error")
                     .and_then(|v| v.as_str())
@@ -153,9 +153,7 @@ impl StreamManager {
                             }
                         }
                         Err(e) => {
-                            tracing::debug!(
-                                "stream reader for {key_clone} disconnected: {e}"
-                            );
+                            tracing::debug!("stream reader for {key_clone} disconnected: {e}");
                             streams_clone.lock().await.remove(&key_clone);
                             break;
                         }

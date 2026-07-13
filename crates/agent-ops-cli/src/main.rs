@@ -66,8 +66,7 @@ async fn main() -> anyhow::Result<()> {
             let config = load_host_config(&cli.hosts_file, &host)?;
             let pane = match pane {
                 Some(p) => p,
-                None => connect::find_lowest_pane(&config, &cli.ca_cert, &session)
-                    .await?,
+                None => connect::find_lowest_pane(&config, &cli.ca_cert, &session).await?,
             };
             connect::connect(&config, &cli.ca_cert, &session, &pane, readonly).await
         }

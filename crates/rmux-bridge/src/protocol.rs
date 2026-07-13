@@ -2,16 +2,16 @@
 //! and translates JSON requests into RMUX SDK calls. Handles all 35 tool
 //! message types plus pane output streaming.
 
+use crate::terminal_state::detect_terminal_state;
 use anyhow::Result;
+use base64::{engine::general_purpose, Engine as _};
 use regex::Regex;
-use base64::{Engine as _, engine::general_purpose};
 use rmux_sdk::{
     capture::{CapturedRegion, Rect},
-    EnsureSession, EnsureSessionPolicy, PaneId, PaneOutputChunk, PaneOutputStart,
-    PaneProcessState, PaneRespawnOptions, ProcessCommandSpec, ProcessSpec, SessionName,
-    SplitDirection, TerminalSizeSpec,
+    EnsureSession, EnsureSessionPolicy, PaneId, PaneOutputChunk, PaneOutputStart, PaneProcessState,
+    PaneRespawnOptions, ProcessCommandSpec, ProcessSpec, SessionName, SplitDirection,
+    TerminalSizeSpec,
 };
-use crate::terminal_state::detect_terminal_state;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -79,8 +79,7 @@ impl ProtocolProxy {
             .into_iter()
             .filter(|l| {
                 let t = l.trim();
-                !t.is_empty()
-                    && !(t.starts_with("root@") && (t.contains('#') || t.contains('$')))
+                !t.is_empty() && !(t.starts_with("root@") && (t.contains('#') || t.contains('$')))
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -271,7 +270,11 @@ impl ProtocolProxy {
                 Ok(pane) => match pane.snapshot().await {
                     Ok(snapshot) => {
                         let raw_text = snapshot.visible_text();
-                        let state = detect_terminal_state(&raw_text, snapshot.cursor.col, snapshot.cursor.visible);
+                        let state = detect_terminal_state(
+                            &raw_text,
+                            snapshot.cursor.col,
+                            snapshot.cursor.visible,
+                        );
                         let full_text = Self::clean_text(&raw_text, None);
                         let text = if max_lines.is_some_and(|n| n > 0) {
                             let n = max_lines.unwrap();
@@ -325,25 +328,27 @@ impl ProtocolProxy {
         };
         let timeout = std::time::Duration::from_millis(timeout_ms);
         match tokio::time::timeout(timeout, pane.wait_for_text(text)).await {
-            Ok(Ok(())) => {
-                match pane.snapshot().await {
-                    Ok(snapshot) => {
-                        let raw_text = snapshot.visible_text();
-                        let state = detect_terminal_state(&raw_text, snapshot.cursor.col, snapshot.cursor.visible);
-                        json!({
-                            "ok": true,
-                            "found": true,
-                            "terminal_state": state,
-                            "cursor": {
-                                "row": snapshot.cursor.row,
-                                "col": snapshot.cursor.col,
-                                "visible": snapshot.cursor.visible,
-                            }
-                        })
-                    }
-                    Err(_) => json!({"ok": true, "found": true}),
+            Ok(Ok(())) => match pane.snapshot().await {
+                Ok(snapshot) => {
+                    let raw_text = snapshot.visible_text();
+                    let state = detect_terminal_state(
+                        &raw_text,
+                        snapshot.cursor.col,
+                        snapshot.cursor.visible,
+                    );
+                    json!({
+                        "ok": true,
+                        "found": true,
+                        "terminal_state": state,
+                        "cursor": {
+                            "row": snapshot.cursor.row,
+                            "col": snapshot.cursor.col,
+                            "visible": snapshot.cursor.visible,
+                        }
+                    })
                 }
-            }
+                Err(_) => json!({"ok": true, "found": true}),
+            },
             Ok(Err(e)) => json!({"ok": false, "error": e.to_string()}),
             Err(_) => {
                 json!({"ok": false, "found": false, "error": format!("timeout waiting for: {}", text)})
@@ -969,7 +974,11 @@ impl ProtocolProxy {
                     let (terminal_state, cursor_info) = match pane.snapshot().await {
                         Ok(snapshot) => {
                             let raw_text = snapshot.visible_text();
-                            let state = detect_terminal_state(&raw_text, snapshot.cursor.col, snapshot.cursor.visible);
+                            let state = detect_terminal_state(
+                                &raw_text,
+                                snapshot.cursor.col,
+                                snapshot.cursor.visible,
+                            );
                             (
                                 serde_json::to_value(state).unwrap_or(serde_json::Value::Null),
                                 json!({
@@ -1107,9 +1116,7 @@ impl ProtocolProxy {
                     .map(|d| {
                         let (process_str, pid): (String, Option<u32>) = match &d.process {
                             PaneProcessState::Unknown => ("unknown".to_string(), None),
-                            PaneProcessState::Running { pid } => {
-                                ("running".to_string(), *pid)
-                            }
+                            PaneProcessState::Running { pid } => ("running".to_string(), *pid),
                             PaneProcessState::Exited => ("exited".to_string(), None),
                             _ => ("unknown".to_string(), None),
                         };
@@ -1149,9 +1156,7 @@ impl ProtocolProxy {
             Ok(sessions) => {
                 let list: Vec<serde_json::Value> = sessions
                     .iter()
-                    .map(|d| {
-                        json!({"session_name": d.name.to_string()})
-                    })
+                    .map(|d| json!({"session_name": d.name.to_string()}))
                     .collect();
                 json!({"ok": true, "sessions": list, "count": list.len()})
             }
@@ -1238,12 +1243,18 @@ impl ProtocolProxy {
                 return json!({"ok": false, "error": format!("invalid pane_id: {}", pane_id_str)})
             }
         };
-        match self.rmux.cmd(&["clear-history", "-t", &pane_id.to_string()]).await {
+        match self
+            .rmux
+            .cmd(&["clear-history", "-t", &pane_id.to_string()])
+            .await
+        {
             Ok(result) => {
                 if result.exit == Some(0) {
                     json!({"ok": true})
                 } else {
-                    let code = result.exit.map_or_else(|| "none".to_string(), |c| c.to_string());
+                    let code = result
+                        .exit
+                        .map_or_else(|| "none".to_string(), |c| c.to_string());
                     let stderr = String::from_utf8_lossy(&result.stderr);
                     json!({"ok": false, "error": format!("CLI command 'clear-history' exited with code {}: {}", code, stderr)})
                 }
@@ -1257,7 +1268,9 @@ impl ProtocolProxy {
         match self.rmux.cmd(&["list-buffers"]).await {
             Ok(result) => {
                 if result.exit != Some(0) {
-                    let code = result.exit.map_or_else(|| "none".to_string(), |c| c.to_string());
+                    let code = result
+                        .exit
+                        .map_or_else(|| "none".to_string(), |c| c.to_string());
                     let stderr = String::from_utf8_lossy(&result.stderr);
                     return json!({"ok": false, "error": format!("CLI command 'list-buffers' exited with code {}: {}", code, stderr)});
                 }
@@ -1308,7 +1321,9 @@ impl ProtocolProxy {
                 if result.exit == Some(0) {
                     json!({"ok": true})
                 } else {
-                    let code = result.exit.map_or_else(|| "none".to_string(), |c| c.to_string());
+                    let code = result
+                        .exit
+                        .map_or_else(|| "none".to_string(), |c| c.to_string());
                     let stderr = String::from_utf8_lossy(&result.stderr);
                     json!({"ok": false, "error": format!("CLI command 'paste-buffer' exited with code {}: {}", code, stderr)})
                 }
@@ -1324,7 +1339,9 @@ impl ProtocolProxy {
                 if result.exit == Some(0) {
                     json!({"ok": true})
                 } else {
-                    let code = result.exit.map_or_else(|| "none".to_string(), |c| c.to_string());
+                    let code = result
+                        .exit
+                        .map_or_else(|| "none".to_string(), |c| c.to_string());
                     let stderr = String::from_utf8_lossy(&result.stderr);
                     json!({"ok": false, "error": format!("CLI command 'delete-buffer' exited with code {}: {}", code, stderr)})
                 }
@@ -1398,7 +1415,7 @@ impl ProtocolProxy {
                     Ok(new_pane) => match new_pane.id().await {
                         Ok(Some(id)) => json!({"ok": true, "new_pane_id": format!("{}", id)}),
                         Ok(None) => json!({"ok": false, "error": "split pane has no id"}),
-                    Err(e) => json!({"ok": false, "found": true, "error": e.to_string()}),
+                        Err(e) => json!({"ok": false, "found": true, "error": e.to_string()}),
                     },
                     Err(e) => json!({"ok": false, "error": e.to_string()}),
                 }
@@ -1421,9 +1438,10 @@ impl ProtocolProxy {
                 };
                 match pane.info().await {
                     Ok(info) => {
-                        let pane_info = info.panes.iter().find(|p| {
-                            pane_id.as_ref().is_some_and(|id| p.id == *id)
-                        });
+                        let pane_info = info
+                            .panes
+                            .iter()
+                            .find(|p| pane_id.as_ref().is_some_and(|id| p.id == *id));
                         match pane_info {
                             Some(p) => {
                                 let (process_str, pid): (String, Option<u32>) = match &p.process {
@@ -1577,11 +1595,14 @@ impl ProtocolProxy {
                 if result.exit == Some(0) {
                     let re = PANE_ID_RE.get_or_init(|| regex::Regex::new(r"%(\d+)").unwrap());
                     let stdout = String::from_utf8_lossy(&result.stdout);
-                    let pid_opt = re.find(&stdout)
+                    let pid_opt = re
+                        .find(&stdout)
                         .map(|m| format!("%{}", m.as_str().trim_start_matches('%')));
                     json!({"ok": true, "pane_id": pid_opt.unwrap_or_default(), "window_index": destination_window})
                 } else {
-                    let code = result.exit.map_or_else(|| "none".to_string(), |c| c.to_string());
+                    let code = result
+                        .exit
+                        .map_or_else(|| "none".to_string(), |c| c.to_string());
                     let stderr = String::from_utf8_lossy(&result.stderr);
                     json!({"ok": false, "error": format!("CLI command 'break-pane' exited with code {}: {}", code, stderr)})
                 }
@@ -1617,7 +1638,9 @@ impl ProtocolProxy {
             match d {
                 "horizontal" | "h" => args.push("-h".to_string()),
                 "vertical" | "v" => args.push("-v".to_string()),
-                invalid => return json!({"ok": false, "error": format!("invalid direction: {}. Expected 'horizontal'/'h' or 'vertical'/'v'", invalid)}),
+                invalid => {
+                    return json!({"ok": false, "error": format!("invalid direction: {}. Expected 'horizontal'/'h' or 'vertical'/'v'", invalid)})
+                }
             }
         }
         if let Some(ref s) = size_str {
@@ -1630,7 +1653,9 @@ impl ProtocolProxy {
                 if result.exit == Some(0) {
                     json!({"ok": true, "source_pane_id": source_pane_id, "target_pane_id": target_pane_id})
                 } else {
-                    let code = result.exit.map_or_else(|| "none".to_string(), |c| c.to_string());
+                    let code = result
+                        .exit
+                        .map_or_else(|| "none".to_string(), |c| c.to_string());
                     let stderr = String::from_utf8_lossy(&result.stderr);
                     json!({"ok": false, "error": format!("CLI command 'join-pane' exited with code {}: {}", code, stderr)})
                 }
@@ -1662,7 +1687,9 @@ impl ProtocolProxy {
                 if result.exit == Some(0) {
                     json!({"ok": true, "source_pane_id": source_pane_id, "target_pane_id": target_pane_id})
                 } else {
-                    let code = result.exit.map_or_else(|| "none".to_string(), |c| c.to_string());
+                    let code = result
+                        .exit
+                        .map_or_else(|| "none".to_string(), |c| c.to_string());
                     let stderr = String::from_utf8_lossy(&result.stderr);
                     json!({"ok": false, "error": format!("CLI command 'swap-pane' exited with code {}: {}", code, stderr)})
                 }
@@ -1708,7 +1735,9 @@ impl ProtocolProxy {
     ) -> serde_json::Value {
         let pane_id = match Self::parse_pane_id(pane_id_str) {
             Some(id) => id,
-            None => return json!({"ok": false, "error": format!("invalid pane_id: {}", pane_id_str)}),
+            None => {
+                return json!({"ok": false, "error": format!("invalid pane_id: {}", pane_id_str)})
+            }
         };
         let sn = match SessionName::new(session_name) {
             Ok(s) => s,
@@ -1760,7 +1789,9 @@ impl ProtocolProxy {
     ) -> serde_json::Value {
         let pane_id = match Self::parse_pane_id(pane_id_str) {
             Some(id) => id,
-            None => return json!({"ok": false, "error": format!("invalid pane_id: {}", pane_id_str)}),
+            None => {
+                return json!({"ok": false, "error": format!("invalid pane_id: {}", pane_id_str)})
+            }
         };
         let sn = match SessionName::new(session_name) {
             Ok(s) => s,
@@ -1776,7 +1807,12 @@ impl ProtocolProxy {
         };
 
         let result = if only_new {
-            if self.rmux.has_capability("sdk.waits.armed").await.unwrap_or(false) {
+            if self
+                .rmux
+                .has_capability("sdk.waits.armed")
+                .await
+                .unwrap_or(false)
+            {
                 match pane.wait_for_next(&decoded).await {
                     Ok(armed) => armed.await,
                     Err(e) => Err(e),
@@ -1804,7 +1840,9 @@ impl ProtocolProxy {
     ) -> serde_json::Value {
         let pane_id = match Self::parse_pane_id(pane_id_str) {
             Some(id) => id,
-            None => return json!({"ok": false, "error": format!("invalid pane_id: {}", pane_id_str)}),
+            None => {
+                return json!({"ok": false, "error": format!("invalid pane_id: {}", pane_id_str)})
+            }
         };
         let sn = match SessionName::new(session_name) {
             Ok(s) => s,
@@ -1826,7 +1864,8 @@ impl ProtocolProxy {
         {
             Ok(snapshot) => {
                 let raw_text = snapshot.visible_text();
-                let state = detect_terminal_state(&raw_text, snapshot.cursor.col, snapshot.cursor.visible);
+                let state =
+                    detect_terminal_state(&raw_text, snapshot.cursor.col, snapshot.cursor.visible);
                 json!({
                     "ok": true,
                     "stable": true,
@@ -1851,7 +1890,10 @@ impl ProtocolProxy {
     /// 获取 rmux session 对象（供 interactive 模块使用）
     pub async fn get_session(&self, name: &str) -> anyhow::Result<rmux_sdk::Session> {
         let sn = SessionName::new(name).map_err(|e| anyhow::anyhow!("{}", e))?;
-        self.rmux.session(sn).await.map_err(|e| anyhow::anyhow!("{}", e))
+        self.rmux
+            .session(sn)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))
     }
 
     /// 获取 rmux pane 对象（供 interactive 模块使用）
@@ -1862,8 +1904,7 @@ impl ProtocolProxy {
     ) -> anyhow::Result<rmux_sdk::Pane> {
         let pane_id = Self::parse_pane_id(pane_id_str)
             .ok_or_else(|| anyhow::anyhow!("invalid pane_id: {}", pane_id_str))?;
-        let sn = SessionName::new(session_name)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        let sn = SessionName::new(session_name).map_err(|e| anyhow::anyhow!("{}", e))?;
         self.rmux
             .get_pane_by_id(&sn, pane_id)
             .await

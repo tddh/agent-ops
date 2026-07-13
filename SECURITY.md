@@ -30,3 +30,31 @@ For production deployments:
 - Rotate authentication tokens regularly
 - Limit bridge access via firewall to trusted IPs only
 - Run bridge as a dedicated non-root user when possible
+
+## Security Features
+
+### File Path Protection
+
+Both upload and download operations enforce path safety checks:
+
+- **Bridge-side**: Paths containing `..` are rejected to prevent path traversal attacks. Null bytes are also rejected.
+- **MCP-side**: Relative paths returned from the bridge during directory downloads are validated to ensure they don't contain `..` or start with `/`.
+
+### Tunnel Target Whitelist (SSRF Protection)
+
+Hosts can optionally configure `allowed_tunnel_targets` in `hosts.yaml` to restrict which remote host:port combinations are allowed for port forwarding tunnels. If not configured, all targets are allowed (backward compatible).
+
+```yaml
+hosts:
+  - name: prod-db-01
+    bridge_addr: 10.0.1.20:9778
+    bridge_token: "your-token"
+    allowed_tunnel_targets:
+      - "127.0.0.1:5432"    # exact match
+      - "10.0.1.*:*"         # glob pattern
+      - "*:3306"             # all hosts, MySQL only
+```
+
+### Exec Safety Check
+
+The `exec` tool checks terminal state before executing commands. If the terminal is not in `ready` state (e.g., inside vim, less, password prompt), execution is refused to prevent command injection into non-shell contexts.

@@ -298,6 +298,9 @@ batch_exec(hosts=["tf01", "dns-backup"], command="hostname")
    → 返回 tunnel_id
 2. 本地连接 localhost:15432 即可访问远程 PostgreSQL
 3. tunnel_close(tunnel_id) → 关闭隧道
+
+# 注意：如果主机配置了 allowed_tunnel_targets 白名单，
+# 只有匹配的目标才允许创建隧道，不匹配会返回错误
 ```
 
 ### 分屏并执行命令（split_pane_with）
@@ -354,6 +357,8 @@ host_capabilities(host="tf01", check="stream.control")
 | `recv: connection lost` | bridge 重启或网络中断 | 等待后重试 |
 | `pane still active` | spawn/shell_command 时 pane 非空闲 | 先 `close_pane` 或换 pane |
 | `timeout` | 命令执行超时 | 增大 `timeout_ms` 或检查命令是否卡住 |
+| `path traversal rejected` | 路径包含 `..` | 使用不含 `..` 的绝对路径或相对路径 |
+| `tunnel target not in allowed list` | 隧道目标不在白名单中 | 检查 `hosts.yaml` 中的 `allowed_tunnel_targets` 配置 |
 | `host not found` | 主机名不在 registry 中 | `host_list` 检查可用主机 |
 
 ## 最佳实践
@@ -369,6 +374,8 @@ host_capabilities(host="tf01", check="stream.control")
 - **危险操作需确认**：`close_pane`、`close_window`、`kill_session` 需用户明确同意
 - **保留会话**：默认不清理会话，用户可能需要查看结果或继续操作
 - **验证 pane_id**：每次操作前通过 `list_window_panes` 确认 pane_id
+- **路径安全**：`file_upload`/`file_download` 的路径不能包含 `..`（bridge 端会拒绝路径穿越）
+- **隧道白名单**：`tunnel_create` 受 `allowed_tunnel_targets` 配置限制，不匹配的目标会被拒绝
 
 ### 错误恢复
 - **连接失败**：等待几秒后重试，可能是临时网络问题
@@ -410,6 +417,12 @@ tunnel_create(
   remote_host="api.internal",
   remote_port=8080
 )
+
+# 安全限制：
+# - 如果 hosts.yaml 配置了 allowed_tunnel_targets，
+#   只有匹配 glob 模式的目标才允许
+# - 例：allowed_tunnel_targets: ["127.0.0.1:5432", "10.0.1.*:*"]
+# - 不配置 = 全部允许（向后兼容）
 ```
 
 ### wait_for_bytes - 等待原始字节

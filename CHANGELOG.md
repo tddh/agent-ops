@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Security
+- **文件路径穿越防护**：Bridge 端 `file_upload`/`file_download` 拒绝包含 `..` 的路径，防止路径穿越攻击
+- **下载目录遍历防护**：MCP 端验证远端返回的相对路径不含 `..` 且非绝对路径
+- **隧道目标白名单（SSRF 防护）**：`hosts.yaml` 新增可选 `allowed_tunnel_targets` 字段，支持 glob 模式限制端口转发目标（如 `"127.0.0.1:5432"`、`"10.0.1.*:*"`），不配置则全部允许（向后兼容）
+
 ### Added
 - **交互式终端直连**：新增 `agent-ops-cli` crate，提供 `agent-ops connect` CLI 命令
   - PTY + `rmux attach-session` 子进程透传方案，完美支持 vim/htop 等 TUI 程序

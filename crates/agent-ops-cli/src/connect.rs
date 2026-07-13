@@ -101,9 +101,7 @@ async fn connect_to_bridge(
     endpoint.set_default_client_config(client_config);
 
     let server_name = bridge_addr.split(':').next().unwrap_or(bridge_addr);
-    let conn = endpoint
-        .connect(bridge_addr.parse()?, server_name)?
-        .await?;
+    let conn = endpoint.connect(bridge_addr.parse()?, server_name)?.await?;
 
     let (mut auth_send, mut auth_recv) = conn.open_bi().await?;
     auth_send.write_all(b"AUTH").await?;
@@ -269,7 +267,11 @@ pub async fn find_lowest_pane(
     crate::protocol::send_json_frame(&mut send, &request).await?;
     let response = crate::protocol::recv_json_frame(&mut recv).await?;
 
-    if !response.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if !response
+        .get("ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         let err = response["error"].as_str().unwrap_or("unknown error");
         anyhow::bail!("failed to list panes: {}", err);
     }
@@ -315,10 +317,8 @@ mod tests {
 
     #[test]
     fn translates_enter_to_carriage_return() {
-        let action = translate_terminal_event(Event::Key(key_event(
-            KeyCode::Enter,
-            KeyModifiers::NONE,
-        )));
+        let action =
+            translate_terminal_event(Event::Key(key_event(KeyCode::Enter, KeyModifiers::NONE)));
 
         assert_eq!(action, TerminalAction::Input(vec![b'\r']));
     }

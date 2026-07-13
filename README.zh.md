@@ -123,6 +123,11 @@ hosts:
 
 **生产环境建议**：自建 CA，为每台 bridge 签发证书，MCP server 只持有 CA 根证书。
 
+**内置安全防护**：
+- **路径穿越防护**：文件上传/下载拒绝包含 `..` 的路径
+- **隧道目标白名单**：`hosts.yaml` 中可选配置 `allowed_tunnel_targets` 限制端口转发目标（支持 glob 模式）
+- **exec 安全检查**：`exec` 在终端非 `ready` 状态时拒绝执行（防止命令注入到 vim/less/密码提示等）
+
 ## 审计查询
 
 ```bash

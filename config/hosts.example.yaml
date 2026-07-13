@@ -31,6 +31,10 @@ hosts:
     labels:
       dc: shanghai
       rack: b1
+    # 可选：限制隧道目标（不配置 = 全部允许）
+    # allowed_tunnel_targets:
+    #   - "127.0.0.1:5432"
+    #   - "10.0.1.*:*"
 
   - name: dev-gpu-01
     bridge_addr: 10.0.2.10:9778
