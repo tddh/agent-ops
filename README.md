@@ -16,6 +16,42 @@ Three problems stand between agent prototypes and production deployment, and exi
 
 The three layers: **Protocol layer** (MCP standard interface, works with any AI client), **Management layer** (multi-host registry, group/tag filtering, broadcast operations), and **Compliance layer** (structured SQLite audit trail, ready for operational traceability). Together they fill the infrastructure gap between agent prototypes and production readiness.
 
+### Where does it fit?
+
+agent-ops is not a replacement for SSH or Ansible — it's the **orchestration layer** that sits above them:
+
+| Layer | Role | Tool |
+|-------|------|------|
+| **Orchestration** | AI-driven decision, file round-trip, cross-host context | agent-ops |
+| **Execution** | Declarative, idempotent, repeatable automation | Ansible (or raw shell) |
+| **Transport** | Encrypted, reliable, persistent connection | agent-ops (QUIC) |
+
+A typical production workflow:
+
+```
+AI Agent
+  │
+  ├─ agent-ops ──── Bastion host (the only host needing rmux-bridge)
+  │     ├── exec: git clone Ansible playbook repo
+  │     ├── exec: ansible-playbook run
+  │     ├── file_download: pull configs for AI review
+  │     ├── file_upload: push modified configs back
+  │     └── session: full-chain audit trail
+  │
+  └─ Bastion ──── Ansible ──── All managed devices
+                     ├── Linux servers (native SSH modules)
+                     ├── Switches (network modules)
+                     └── BMC (Redfish modules)
+```
+
+Key insight: you don't need agent-ops on every switch or BMC. One bastion host running the bridge is enough — agent-ops orchestrates from there, Ansible reaches everywhere else.
+
+**Use cases:**
+- **Bulk deployment & configuration**: AI pulls Playbooks → reviews and modifies locally → pushes back and executes, with full Git version control
+- **Incident diagnosis & recovery**: AI dynamically reads node state → determines root cause → executes repairs, instead of rigid pre-written automation
+- **Interactive operations**: Complex operations requiring persistent sessions (builds, long-running task monitoring, interactive debugging)
+- **Compliance auditing**: Full-chain audit trail (Git history + agent-ops session + Ansible logs), every step traceable
+
 ## Architecture
 
 ```mermaid
