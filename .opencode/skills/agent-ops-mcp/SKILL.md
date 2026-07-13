@@ -202,6 +202,41 @@ wait_stable(host, session_name, pane_id)
 → 知道已进入 Python REPL，可以发送 Python 代码
 ```
 
+## exec 安全检查
+
+`exec` 工具在执行命令前会检测终端状态。如果终端不在 `ready` 状态，exec 会拒绝执行并返回 `refused: true`。
+
+### 为什么需要安全检查
+
+| 场景 | 不检查的后果 |
+|------|------------|
+| 终端在 vim 中 | 命令被注入到编辑器，文件损坏 |
+| 终端在 less 中 | 命令被当作搜索/导航输入 |
+| 终端在等密码 | 命令被当作密码输入 |
+| 终端在 REPL 中 | 命令被当作 Python/MySQL 代码执行 |
+
+### 当 exec 返回 refused 时的决策框架
+
+**核心原则：AI 决策，不是工具决策。** 工具只负责检测和拒绝，AI 根据上下文决定下一步。
+
+1. 检查 `pre_terminal_state`，理解终端当前状态
+2. 回溯对话历史：是你自己把终端带到这个状态的吗？
+   - **是** → 你知道怎么退出，先退出再重试
+   - **不是** → 用 `capture_pane` 查看终端内容，判断情况
+3. 绝不在不理解终端状态的情况下强制发送按键
+
+### 常见恢复模式
+
+| pre_terminal_state | 恢复操作 |
+|---|---|
+| `editor` | `send_keys("\x1b:q!\n")` 退出 vim，或 `send_keys("\x18\x13")` 退出 nano |
+| `pager` | `send_keys("q")` 退出 less/more |
+| `password` | 提示用户输入密码，或 `send_keys("\x03")` 取消 |
+| `confirm` | `send_keys("y\n")` 或 `send_keys("n\n")` |
+| `running` | `wait_stable` 等待完成，或 `send_keys("\x03")` 中断 |
+| `repl` | `send_keys("exit()\n")` 退出 REPL |
+| `unknown` | `capture_pane` 查看文本后自行判断 |
+
 ## 常见场景
 
 ### 执行单个命令
