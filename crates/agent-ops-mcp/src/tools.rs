@@ -512,6 +512,61 @@ async fn exec_in_session<S>(
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
 {
+    // ── Pre-execution safety check ──
+    // Capture terminal state before sending any keys. If the terminal is not in
+    // "ready" state (e.g. editor, pager, password prompt), refuse to execute
+    // to prevent command injection into non-shell contexts.
+    let precheck_state = {
+        let check_req = json!({
+            "type": "capture_pane",
+            "session_name": session_name,
+            "pane_id": pane_id,
+            "max_lines": 50,
+        });
+        match send_json_frame(stream, &check_req).await {
+            Ok(_) => match recv_json_frame(stream).await {
+                Ok(resp) => resp.get("terminal_state").cloned(),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        }
+    };
+
+    let is_ready = precheck_state
+        .as_ref()
+        .and_then(|v| v.as_str())
+        .map(|s| s == "ready")
+        .unwrap_or(true); // If detection fails, allow execution (backward compatible)
+
+    if !is_ready {
+        let state_name = precheck_state
+            .as_ref()
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        let suggestion = match state_name {
+            "editor" => "Terminal is in editor (vim/nano). Use send_keys to interact with editor, or exit editor first.",
+            "pager" => "Terminal is in pager (less/more). Use send_keys('q') to exit pager first.",
+            "password" => "Terminal is waiting for password. Use send_keys to provide password or Ctrl-C to cancel.",
+            "confirm" => "Terminal is waiting for confirmation. Use send_keys to respond.",
+            "running" => "A process is still running. Use wait_stable/wait_exit to wait, or send_keys(Ctrl-C) to stop it.",
+            "repl" => "Terminal is in REPL (python3/mysql). Use send_keys to send REPL commands, or exit REPL first.",
+            _ => "Terminal state is unknown. Use capture_pane to inspect terminal content.",
+        };
+
+        return ExecResult {
+            ok: false,
+            output: String::new(),
+            exit_code: None,
+            duration_ms: 0,
+            error: Some(suggestion.to_string()),
+            terminal_state: precheck_state.clone(),
+            cursor: None,
+            pre_terminal_state: precheck_state,
+            refused: true,
+        };
+    }
+
     let marker_id = Uuid::new_v4().to_string();
     let marker_id = &marker_id[..3];
     let start_marker = format!("[{}]", marker_id);
@@ -530,7 +585,7 @@ where
             ok: false, output: String::new(), exit_code: None,
             duration_ms: 0, error: Some(format!("send_keys: {e}")),
             terminal_state: None, cursor: None,
-            pre_terminal_state: None, refused: false,
+            pre_terminal_state: precheck_state.clone(), refused: false,
         };
     }
 
@@ -540,7 +595,7 @@ where
             ok: false, output: String::new(), exit_code: None,
             duration_ms: 0, error: Some(format!("send_keys: {e}")),
             terminal_state: None, cursor: None,
-            pre_terminal_state: None, refused: false,
+            pre_terminal_state: precheck_state.clone(), refused: false,
         },
     };
 
@@ -550,7 +605,7 @@ where
             ok: false, output: String::new(), exit_code: None,
             duration_ms: 0, error: Some(err),
             terminal_state: None, cursor: None,
-            pre_terminal_state: None, refused: false,
+            pre_terminal_state: precheck_state.clone(), refused: false,
         };
     }
 
@@ -573,7 +628,7 @@ where
                 duration_ms: start.elapsed().as_millis() as u64,
                 error: Some(format!("capture_pane: {e}")),
                 terminal_state: last_terminal_state, cursor: last_cursor,
-                pre_terminal_state: None, refused: false,
+                pre_terminal_state: precheck_state.clone(), refused: false,
             };
         }
         let resp = match recv_json_frame(stream).await {
@@ -583,7 +638,7 @@ where
                 duration_ms: start.elapsed().as_millis() as u64,
                 error: Some(format!("recv: {e}")),
                 terminal_state: last_terminal_state, cursor: last_cursor,
-                pre_terminal_state: None, refused: false,
+                pre_terminal_state: precheck_state.clone(), refused: false,
             },
         };
         last_text = resp["text"].as_str().unwrap_or("").to_string();
@@ -637,7 +692,7 @@ where
                 duration_ms,
                 error: None,
                 terminal_state: last_terminal_state, cursor: last_cursor,
-                pre_terminal_state: None, refused: false,
+                pre_terminal_state: precheck_state.clone(), refused: false,
             };
         }
 
@@ -650,7 +705,7 @@ where
                 duration_ms,
                 error: Some(format!("timeout waiting for sentinel after {}ms", timeout_ms)),
                 terminal_state: last_terminal_state, cursor: last_cursor,
-                pre_terminal_state: None, refused: false,
+                pre_terminal_state: precheck_state.clone(), refused: false,
             };
         }
 
