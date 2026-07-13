@@ -521,14 +521,20 @@ where
             "type": "capture_pane",
             "session_name": session_name,
             "pane_id": pane_id,
-            "max_lines": 50,
+            "max_lines": 1,
         });
         match send_json_frame(stream, &check_req).await {
             Ok(_) => match recv_json_frame(stream).await {
                 Ok(resp) => resp.get("terminal_state").cloned(),
-                Err(_) => None,
+                Err(e) => {
+                    tracing::warn!(error = %e, "precheck: failed to receive capture_pane response");
+                    None
+                }
             },
-            Err(_) => None,
+            Err(e) => {
+                tracing::warn!(error = %e, "precheck: failed to send capture_pane request");
+                None
+            }
         }
     };
 
@@ -756,6 +762,12 @@ async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
     }
     if let Some(ref cursor) = result.cursor {
         response["cursor"] = cursor.clone();
+    }
+    if let Some(ref pre_state) = result.pre_terminal_state {
+        response["pre_terminal_state"] = pre_state.clone();
+    }
+    if result.refused {
+        response["refused"] = json!(true);
     }
     Ok(response)
 }
