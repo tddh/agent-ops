@@ -632,6 +632,7 @@ mod tests {
 | v2 | 2026-07-13 | Oracle 审查后修订：① 密码/确认检测优先级提升到 cursor_col=0 之前（P0 安全修复）② 添加 cursor_col=0 反例说明 ③ 明确检测在 clean_text 之前运行 ④ 修正 exec 依赖链说明 ⑤ 修正 pane_info 成本评估（IPC 往返而非纯字符串操作）⑥ 发现 pane.info() 自带 cursor 字段 ⑦ 补充 6 个测试用例（zsh、htop、命令输出含 $、git commit vim、polkit、P0 反例） |
 | v3 | 2026-07-13 | 对比 PiloTY 排序后修订：① cursor_col=0 从独立规则改为 shell 提示符的二次验证（借鉴 PiloTY 做法，避免 heredoc 等非 shell 场景误判）② 规则编号重排为 0-7 ③ 更新测试用例适配新逻辑 |
 | v4 | 2026-07-13 | E2E 测试后修订：① 修复 vim 新文件检测（添加 `[New]` 标记 + `~` 行计数启发式）② 新增 2 个测试用例（vim_new_file、vim_tilde_lines）③ 全部 11 个 E2E 场景通过验证 |
+| v5 | 2026-07-13 | MCP Server 重启后验证：exec 工具成功返回 `terminal_state` 和 `cursor` 字段，所有 12 个 E2E 场景全部通过 |
 
 ---
 

@@ -179,7 +179,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "capture_pane",
-                "description": "Capture pane text (default last 200 lines, max_lines=0 for full scrollback). Advanced capture with ansi, start_line, end_line, join_wrapped, preserve_spaces, alternate, buffer_name for fine-grained control.",
+                "description": "Capture pane text (default last 200 lines, max_lines=0 for full scrollback). Advanced capture with ansi, start_line, end_line, join_wrapped, preserve_spaces, alternate, buffer_name for fine-grained control. Returns text plus terminal_state (ready/running/password/confirm/repl/editor/pager/unknown) and cursor position.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -200,7 +200,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "wait_for_text",
-                "description": "Block until specific text appears in the pane's visible output, or timeout expires. Polls the pane content periodically and returns as soon as the text is found. Returns found=true if text appeared, found=false on timeout. Use this instead of polling capture_pane in a loop. Ideal for waiting for command prompts, completion messages, or error indicators. Default timeout is 30 seconds.",
+                "description": "Block until specific text appears in the pane's visible output, or timeout expires. Polls the pane content periodically and returns as soon as the text is found. Returns found=true if text appeared, found=false on timeout. On success, also returns terminal_state (ready/running/password/confirm/repl/editor/pager/unknown) and cursor position. Use this instead of polling capture_pane in a loop. Ideal for waiting for command prompts, completion messages, or error indicators. Default timeout is 30 seconds.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -333,7 +333,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "exec",
-                "description": "One-shot command execution: send command → wait for exit → capture output → clean text (default 200 lines, 30s timeout). Automatically clears any unexecuted input before running. Do NOT use shell combiners (&&, ;, |) unless the user explicitly requests it — run commands separately. For self-terminating commands (ls, cat, grep, systemctl, kubectl, curl). NOT for interactive programs (vim, htop) or non-terminating commands (tail -f, ping). Use send_keys + capture_pane for those.",
+                "description": "One-shot command execution: send command → wait for exit → capture output → clean text (default 200 lines, 30s timeout). Automatically clears any unexecuted input before running. Returns output, exit_code, duration_ms, plus terminal_state (ready/running/password/confirm/repl/editor/pager/unknown) and cursor position. Do NOT use shell combiners (&&, ;, |) unless the user explicitly requests it — run commands separately. For self-terminating commands (ls, cat, grep, systemctl, kubectl, curl). NOT for interactive programs (vim, htop) or non-terminating commands (tail -f, ping). Use send_keys + capture_pane for those.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -554,7 +554,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "pane_info",
-                "description": "Get detailed information about a pane. Returns pane_id, size (cols x rows), current command, working directory, title, and tags. Use this to verify pane state, check what process is running, or get the working directory. For listing all panes in a window, use list_window_panes.",
+                "description": "Get detailed information about a pane. Returns pane_id, size (cols x rows), current command, working directory, title, tags, plus terminal_state (ready/running/password/confirm/repl/editor/pager/unknown) and cursor position. Use this to verify pane state, check what process is running, or get the working directory. For listing all panes in a window, use list_window_panes.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -922,7 +922,7 @@ async fn main() -> anyhow::Result<()> {
             },
             {
                 "name": "wait_stable",
-                "description": "Wait until the pane output has been stable (no changes) for a specified duration. Monitors the pane content and returns when it hasn't changed for stable_ms milliseconds. Use this after sending commands to ensure terminal rendering is complete before capturing output. Ideal for commands with progressive output (e.g., builds, downloads) where you want to wait for completion without knowing the exact completion text. Default stable duration is 500ms, default timeout is 30 seconds.",
+                "description": "Wait until the pane output has been stable (no changes) for a specified duration. Monitors the pane content and returns when it hasn't changed for stable_ms milliseconds. Returns stable=true plus terminal_state (ready/running/password/confirm/repl/editor/pager/unknown) and cursor position. Use this after sending commands to ensure terminal rendering is complete before capturing output. Ideal for commands with progressive output (e.g., builds, downloads) where you want to wait for completion without knowing the exact completion text. Default stable duration is 500ms, default timeout is 30 seconds.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {

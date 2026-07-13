@@ -157,6 +157,51 @@ close_pane(host="tf01", session_name="agent-ops", pane_id="%0")  # ❌ 违反规
 | 部署 bridge | `deploy_bridge`（升级部署，需已运行 bridge） |
 | 查询主机能力 | `host_capabilities`（检查 rmux 特性支持） |
 
+## 终端状态感知（terminal_state）
+
+以下 5 个工具的返回值中包含 `terminal_state` 和 `cursor` 字段：
+
+| 工具 | terminal_state | cursor |
+|------|:---:|:---:|
+| `capture_pane` | ✅ | ✅ |
+| `exec` | ✅ | ✅ |
+| `wait_for_text` | ✅（成功时） | ✅（成功时） |
+| `wait_stable` | ✅ | ✅ |
+| `pane_info` | ✅ | ✅ |
+
+### terminal_state 值含义
+
+| 值 | 含义 | AI 应采取的动作 |
+|---|------|----------------|
+| `ready` | Shell 提示符，可以发送命令 | 正常发送命令 |
+| `running` | 命令正在执行中 | 等待完成（`wait_stable` / `wait_for_text`） |
+| `password` | 等待密码输入 | 提示用户输入密码，或发送密码 |
+| `confirm` | 等待确认（[y/n]） | 发送 `y` 或 `n` |
+| `repl` | 交互式环境（Python >>>、mysql>） | 发送 REPL 命令 |
+| `editor` | 编辑器（vim、nano） | 发送编辑器按键，或 `\x1b:q!\n` 退出 |
+| `pager` | 分页器（less、more） | 发送 `q` 退出 |
+| `unknown` | 无法判断 | 用 `capture_pane` 查看文本自行判断 |
+
+### 使用示例
+
+```
+# exec 返回 terminal_state，可以直接判断命令执行后的终端状态
+exec(host, session_name, pane_id, command="vim file.txt")
+→ {"ok": false, "terminal_state": "editor", ...}
+→ 知道 vim 已打开，需要发送 \x1b:q!\n 退出
+
+# capture_pane 返回 terminal_state，可以判断当前终端在干什么
+capture_pane(host, session_name, pane_id)
+→ {"terminal_state": "password", ...}
+→ 知道终端在等密码输入，不应发送普通命令
+
+# wait_stable 返回 terminal_state，可以判断命令完成后终端状态
+send_keys("python3\n")
+wait_stable(host, session_name, pane_id)
+→ {"terminal_state": "repl", ...}
+→ 知道已进入 Python REPL，可以发送 Python 代码
+```
+
 ## 常见场景
 
 ### 执行单个命令
