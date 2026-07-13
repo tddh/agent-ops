@@ -14,10 +14,11 @@ Instead, email the maintainer directly. We will respond within 48 hours and work
 
 ## Security Model
 
-agent-ops consists of two components connected over TLS:
+agent-ops consists of three components connected over TLS:
 
 1. **agent-ops-mcp** — MCP server running alongside the AI client
-2. **rmux-bridge** — Bridge daemon deployed on target Linux hosts
+2. **agent-ops-cli** — CLI tool for humans to attach to remote sessions
+3. **rmux-bridge** — Bridge daemon deployed on target Linux hosts
 
 Security assumptions:
 - The TLS channel between MCP server and bridge is encrypted and authenticated

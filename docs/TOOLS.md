@@ -116,7 +116,7 @@
 
 ### `capture_pane`
 
-捕获窗格文本（默认最后 200 行，`max_lines=0` 返回全部 scrollback）。经 ANSI 剥离和 prompt 过滤。
+捕获窗格文本（默认最后 200 行，`max_lines=0` 返回全部 scrollback）。支持高级选项：ANSI 保留、行范围截取、换行拼接、空格保留、交替屏捕获、写入 buffer。
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|:---:|------|
@@ -124,6 +124,13 @@
 | `session_name` | string | ✅ | |
 | `pane_id` | string | ✅ | |
 | `max_lines` | integer | | 默认 200，0=不限制 |
+| `ansi` | boolean | | 保留 ANSI 转义码（默认 false），true 时 text 为 base64 |
+| `start_line` | integer | | 起始行（负数 = 从末尾算），覆盖 max_lines |
+| `end_line` | integer | | 结束行（负数 = 从末尾算） |
+| `join_wrapped` | boolean | | 拼接终端自动换行的行（默认 false） |
+| `preserve_spaces` | boolean | | 保留尾部空格（默认 false） |
+| `alternate` | boolean | | 捕获交替屏（如 vim/less），默认 false |
+| `buffer_name` | string | | 写入指定 buffer 而非返回文本 |
 
 **返回** `{"ok": true, "text": "...", "terminal_state": "ready", "cursor": {"row": 0, "col": 14, "visible": true}}`
 
@@ -428,6 +435,10 @@
 | `command` | string | ✅ | 在新 pane 中运行的命令 |
 | `args` | string[] | | 命令参数 |
 | `shell` | boolean | | `true`=通过 `/bin/sh -c` 执行，默认 `true` |
+| `cwd` | string | | 新 pane 的工作目录 |
+| `env` | object | | 环境变量，`KEY:VALUE` 键值对 |
+| `title` | string | | 新 pane 的标题 |
+| `keep_alive_on_exit` | boolean | | 命令退出后保留 pane（默认 false） |
 
 **返回** `{"ok": true, "new_pane_id": "%N"}`
 
@@ -673,13 +684,20 @@
 
 ### `respawn_pane`
 
-重新 spawn 窗格进程（默认选项）。用于 pane 中进程已退出或需要重置 shell 环境时。
+重新 spawn 窗格进程。用于 pane 中进程已退出或需要重置 shell 环境时。支持自定义命令、环境变量、工作目录等。
 
-| 参数 | 类型 | 必填 |
-|------|------|:---:|
-| `host` | string | ✅ |
-| `session_name` | string | ✅ |
-| `pane_id` | string | ✅ |
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `host` | string | ✅ | |
+| `session_name` | string | ✅ | |
+| `pane_id` | string | ✅ | |
+| `command` | string | | 替换默认 shell（可选） |
+| `args` | string[] | | 命令参数（`shell=false` 时使用） |
+| `shell` | boolean | | 通过 `/bin/sh -c` 执行（默认 false） |
+| `cwd` | string | | 工作目录 |
+| `env` | object | | 环境变量，`KEY:VALUE` 键值对 |
+| `kill` | boolean | | 强制 kill 当前进程再 respawn（默认 false） |
+| `keep_alive_on_exit` | boolean | | 进程退出后保留 pane（默认 false） |
 
 ---
 
@@ -693,7 +711,7 @@
 |------|------|:---:|
 | `host` | string | ✅ |
 | `session_name` | string | ✅ |
-| `pane_ids` | string[] | ✅ |
+| `pane_ids` | string[] | | 目标 pane ID 列表（省略则广播到所有 pane） |
 | `keys` | string | ✅ |
 
 ### `cmd_escape`
@@ -703,7 +721,7 @@
 | 参数 | 类型 | 必填 |
 |------|------|:---:|
 | `host` | string | ✅ |
-| `args` | string[] | ✅ |
+| `args` | string[] | | rmux CLI 参数（如 `["list-sessions"]`） |
 
 **返回** `{"ok": true, "stdout": "...", "stderr": "", "exit_code": 0}`
 
@@ -840,7 +858,7 @@ agent-ops-mcp audit cleanup [--db <path>] [--older-than <days>] [--max-size <mb>
 | `host_name` | string | 目标主机 |
 | `session_name` | string | 会话名 |
 | `pane_id` | string | 窗格 ID（非 pane 操作为空） |
-| `action` | string | 操作类型（56 种 AuditAction） |
+| `action` | string | 操作类型（60 种 AuditAction） |
 | `detail` | string | 操作参数 |
 | `output_summary` | string | Exec/CmdEscape 的输出摘要（前 500 字符） |
 | `success` | bool | 操作是否成功 |
@@ -882,7 +900,7 @@ Execute the same command on multiple hosts concurrently. Sends the command to al
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|:---:|------|
-| `hosts` | string[] | ✅ | 主机名列表，最多 64 |
+| `hosts` | string[] | ✅ | 主机名列表 |
 | `command` | string | ✅ | 要在每台主机上执行的命令 |
 | `timeout_ms` | number | | 每台主机超时毫秒数（默认 120000） |
 | `max_lines` | integer | | 每台主机最大返回行数（默认 200，0=不限制） |

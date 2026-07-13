@@ -57,11 +57,14 @@ This is just one pattern. You can also deploy the bridge directly on target host
 ```mermaid
 graph LR
     A[AI Client] <-->|MCP stdio| B[agent-ops-mcp<br/>macOS/Linux/Windows]
+    H[Human] <-->|PTY passthrough| E[agent-ops-cli<br/>macOS/Linux]
     B <-->|QUIC :9778<br/>terminal ops + file transfer| C[rmux-bridge<br/>Linux host]
+    E <-->|QUIC :9778<br/>terminal attach| C
     C <-->|Unix Socket| D[RMUX daemon<br/>rmux-based]
 ```
 
-- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 60 terminal control tools + audit CLI
+- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 61 terminal control tools + audit CLI
+- **agent-ops-cli** — CLI tool for humans to directly attach to remote rmux sessions via PTY passthrough (`agent-ops connect`), supporting vim/htop/TUI
 - **rmux-bridge** — QUIC-encrypted proxy deployed on each target Linux host, translating JSON requests to RMUX daemon calls
 - **RMUX daemon** — Terminal multiplexer on each Linux host (rmux-based)
 
@@ -70,6 +73,7 @@ graph LR
 | Component | Runs on | Depends on |
 |-----------|---------|------------|
 | `agent-ops-mcp` | AI client machine (macOS/Linux/Windows) | Nothing — just the binary |
+| `agent-ops-cli` | Human operator machine (macOS/Linux) | Nothing — just the binary |
 | `rmux-bridge` | Each target Linux host | **RMUX daemon** (`curl -fsSL https://rmux.io/install.sh \| sh`) |
 | RMUX daemon | Each target Linux host | rmux (needs installation) |
 
@@ -97,6 +101,7 @@ graph LR
 ```bash
 # Native build (macOS dev)
 cargo build -p agent-ops-mcp --release
+cargo build -p agent-ops-cli --release
 
 # Cross-compile bridge for Linux x86_64 (static)
 just release-linux
@@ -148,7 +153,7 @@ Edit `~/.config/opencode/opencode.json` (see `config/mcp-config.example.json`):
 }
 ```
 
-> 远程部署使用 `ca.crt`；本地自签名测试可用 `bridge.crt`。
+> Use `ca.crt` for remote deployments; `bridge.crt` for local self-signed testing.
 
 ## Security
 

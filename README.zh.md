@@ -57,11 +57,14 @@ AI Agent (你的 AI 客户端)
 ```mermaid
 graph LR
     A[AI 客户端] <-->|MCP stdio| B[agent-ops-mcp<br/>macOS/Linux/Windows]
+    H[人] <-->|PTY 透传| E[agent-ops-cli<br/>macOS/Linux]
     B <-->|QUIC :9778<br/>终端操作 + 文件传输| C[rmux-bridge<br/>Linux 远程主机]
+    E <-->|QUIC :9778<br/>终端 attach| C
     C <-->|Unix Socket| D[RMUX daemon<br/>基于 rmux]
 ```
 
 - **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 61 个终端控制工具 + 操作审计 CLI
+- **agent-ops-cli** — 命令行工具，人可以直接 PTY 透传 attach 到远程 rmux 会话（`agent-ops connect`），支持 vim/htop/TUI
 - **rmux-bridge** — 部署在每台目标 Linux 主机上的 QUIC 加密代理，将 JSON 请求翻译为 RMUX daemon 调用
 - **RMUX daemon** — 每台 Linux 主机上的终端多路复用器（基于 rmux）
 
@@ -70,6 +73,7 @@ graph LR
 | 组件              | 运行位置                        | 依赖                                                             |
 | --------------- | --------------------------- | -------------------------------------------------------------- |
 | `agent-ops-mcp` | AI 客户端（macOS/Linux/Windows） | 无 — 单个二进制即可                                                    |
+| `agent-ops-cli` | 运维人员机器（macOS/Linux）        | 无 — 单个二进制即可                                                    |
 | `rmux-bridge`   | 每台目标 Linux 主机               | **RMUX daemon**（`curl -fsSL https://rmux.io/install.sh \| sh`） |
 | RMUX daemon     | 每台目标 Linux 主机               | rmux（需要安装）                                                     |
 
@@ -97,6 +101,7 @@ graph LR
 ```bash
 # 本机构建（macOS 开发）
 cargo build -p agent-ops-mcp --release
+cargo build -p agent-ops-cli --release
 
 # 交叉编译 bridge（Linux x86_64，静态链接）
 just release-linux

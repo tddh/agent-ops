@@ -12,7 +12,8 @@
 └─────────────────┘            └──────────────┘ ════════════════════════╝ └──────────────────┘                └─────────┘
 ```
 
-- **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 60 个终端控制工具 + 操作审计 CLI
+- **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 61 个终端控制工具 + 操作审计 CLI
+- **agent-ops-cli**: 命令行工具，人可以直接 PTY 透传 attach 到远程 rmux 会话（`agent-ops connect`）
 - **rmux-bridge**: 部署在每台目标 Linux 主机上，QUIC 加密代理 → RMUX daemon。终端操作与文件传输统一走 QUIC 协议（UDP :9778）
 - **RMUX daemon**: 每个 Linux 主机上的终端多路复用器
 
@@ -33,18 +34,20 @@
 ```bash
 # 本机构建（macOS 开发）
 cargo build -p agent-ops-mcp --release
+cargo build -p agent-ops-cli --release
 
 # 交叉编译 bridge（Linux x86_64，静态链接）
 CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc \
   cargo build --target x86_64-unknown-linux-musl --release -p rmux-bridge
 
 # 或用 just 快捷命令
-just release-linux          # 交叉编译 bridge + mcp
+just release-linux          # 交叉编译 bridge + mcp（Linux 目标）
 just build-mcp              # 本机构建 mcp
 ```
 
 构建产物：
 - `target/release/agent-ops-mcp` — MCP server（本地运行）
+- `target/release/agent-ops-cli` — 命令行工具（本地运行）
 - `target/x86_64-unknown-linux-musl/release/rmux-bridge` — bridge（部署到远程）
 
 ### 2. 部署
