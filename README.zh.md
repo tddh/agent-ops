@@ -26,12 +26,12 @@ agent-ops 不是 SSH 或 Ansible 的替代品，而是**运行在它们之上的
 | **执行层** | 声明式、幂等、可重复的自动化 | Ansible（或裸 shell） |
 | **传输层** | 加密、可靠、持久化连接 | agent-ops（QUIC） |
 
-典型的生产架构：
+举个例子 —— 如果你已经有 Ansible 管理体系，可以这样组合：
 
 ```
 AI Agent (你的 AI 客户端)
   │
-  ├─ agent-ops ──── 跳板机 (唯一需要部署 rmux-bridge 的主机)
+  ├─ agent-ops ──── 跳板机 (部署 rmux-bridge)
   │     ├── exec: git clone/pull Ansible Playbook 仓库
   │     ├── exec: ansible-playbook 执行
   │     ├── file_download: 拉取配置文件供 AI 分析
@@ -44,7 +44,7 @@ AI Agent (你的 AI 客户端)
                     └── BMC (Redfish 模块)
 ```
 
-核心认知：你不需要在每台交换机或 BMC 上部署 agent-ops。只需一台跳板机运行 bridge，agent-ops 从那里编排，Ansible 打到全网。
+这只是其中一种模式。你也可以直接在目标主机上部署 bridge，AI 直接操作；也可以多台主机各自部署 bridge 用 `batch_exec` 并行管理。agent-ops 不绑定任何特定的拓扑结构。
 
 **适用场景：**
 - **批量部署与配置**：AI 拉取 Playbook → 本地分析修改 → 推回执行，全程 Git 版本管理

@@ -372,6 +372,7 @@ host_capabilities(host="tf01", check="stream.control")
 - **避免 capture_pane 轮询**：使用 `stream_pane` 或 `wait_for_text` 替代
 - **批量操作**：多台主机用 `batch_exec` 而非循环调用 `exec`
 - **大输出命令**：用 `collect_until_exit` 而非 `exec`（避免多次 capture）
+- **合并诊断命令**：单主机多个只读诊断命令用 `&&` 合并为一个 `exec`（如 `df -h && free -m && uptime`），减少 LLM 推理轮次。可能触发 pager 的命令加 `--no-pager` 或 `| cat`
 - **并发控制**：`batch_*` 工具支持 `concurrency` 参数，默认 5
 
 ### 安全实践

@@ -26,12 +26,12 @@ agent-ops is not a replacement for SSH or Ansible — it's the **orchestration l
 | **Execution** | Declarative, idempotent, repeatable automation | Ansible (or raw shell) |
 | **Transport** | Encrypted, reliable, persistent connection | agent-ops (QUIC) |
 
-A typical production workflow:
+An example — if you already use Ansible, here's one way to combine them:
 
 ```
 AI Agent
   │
-  ├─ agent-ops ──── Bastion host (the only host needing rmux-bridge)
+  ├─ agent-ops ──── Bastion host (running rmux-bridge)
   │     ├── exec: git clone Ansible playbook repo
   │     ├── exec: ansible-playbook run
   │     ├── file_download: pull configs for AI review
@@ -44,7 +44,7 @@ AI Agent
                      └── BMC (Redfish modules)
 ```
 
-Key insight: you don't need agent-ops on every switch or BMC. One bastion host running the bridge is enough — agent-ops orchestrates from there, Ansible reaches everywhere else.
+This is just one pattern. You can also deploy the bridge directly on target hosts for direct AI operation, or deploy bridges on multiple hosts and manage them in parallel with `batch_exec`. agent-ops doesn't prescribe any specific topology.
 
 **Use cases:**
 - **Bulk deployment & configuration**: AI pulls Playbooks → reviews and modifies locally → pushes back and executes, with full Git version control
