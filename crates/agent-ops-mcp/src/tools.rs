@@ -494,6 +494,8 @@ struct ExecResult {
     error: Option<String>,
     terminal_state: Option<serde_json::Value>,
     cursor: Option<serde_json::Value>,
+    pre_terminal_state: Option<serde_json::Value>,
+    refused: bool,
 }
 
 /// 在已有 session + pane 中执行一次性命令并等待结果。
@@ -528,6 +530,7 @@ where
             ok: false, output: String::new(), exit_code: None,
             duration_ms: 0, error: Some(format!("send_keys: {e}")),
             terminal_state: None, cursor: None,
+            pre_terminal_state: None, refused: false,
         };
     }
 
@@ -537,6 +540,7 @@ where
             ok: false, output: String::new(), exit_code: None,
             duration_ms: 0, error: Some(format!("send_keys: {e}")),
             terminal_state: None, cursor: None,
+            pre_terminal_state: None, refused: false,
         },
     };
 
@@ -546,6 +550,7 @@ where
             ok: false, output: String::new(), exit_code: None,
             duration_ms: 0, error: Some(err),
             terminal_state: None, cursor: None,
+            pre_terminal_state: None, refused: false,
         };
     }
 
@@ -568,6 +573,7 @@ where
                 duration_ms: start.elapsed().as_millis() as u64,
                 error: Some(format!("capture_pane: {e}")),
                 terminal_state: last_terminal_state, cursor: last_cursor,
+                pre_terminal_state: None, refused: false,
             };
         }
         let resp = match recv_json_frame(stream).await {
@@ -577,6 +583,7 @@ where
                 duration_ms: start.elapsed().as_millis() as u64,
                 error: Some(format!("recv: {e}")),
                 terminal_state: last_terminal_state, cursor: last_cursor,
+                pre_terminal_state: None, refused: false,
             },
         };
         last_text = resp["text"].as_str().unwrap_or("").to_string();
@@ -630,6 +637,7 @@ where
                 duration_ms,
                 error: None,
                 terminal_state: last_terminal_state, cursor: last_cursor,
+                pre_terminal_state: None, refused: false,
             };
         }
 
@@ -642,6 +650,7 @@ where
                 duration_ms,
                 error: Some(format!("timeout waiting for sentinel after {}ms", timeout_ms)),
                 terminal_state: last_terminal_state, cursor: last_cursor,
+                pre_terminal_state: None, refused: false,
             };
         }
 
