@@ -650,7 +650,7 @@ mod tests {
 |:-:|------|----------|---------|---------|:----:|
 | 1 | 部署 | `just release-linux` + `deploy_bridge` | bridge 重启成功 | `status: restarted` | ✅ |
 | 2 | bash prompt | `capture_pane`（空闲 shell） | `ready` | `ready` | ✅ |
-| 3 | exec 返回 | `exec echo "hello"` | 含 `terminal_state` | 未返回 | ⚠️ |
+| 3 | exec 返回 | \`exec echo "hello"\` | 含 \`pre_terminal_state\` + \`terminal_state\` | \`pre_terminal_state: "ready"\` | ✅ |
 | 4 | wait_stable | `echo "test" && sleep 1` → `wait_stable` | `ready` | `ready` | ✅ |
 | 5 | wait_for_text | `echo "MARKER"` → `wait_for_text` | `ready` | `ready` | ✅ |
 | 6 | pane_info | `pane_info`（空闲 shell） | `ready` | `ready` | ✅ |
@@ -670,11 +670,4 @@ mod tests {
 
 **验证**：修复后重新部署，vim 场景正确返回 `editor`。
 
-### 11.4 已知限制
 
-**exec 工具未返回 terminal_state**：
-
-- **原因**：exec 的 terminal_state 提取逻辑在 MCP Server 端（本地 macOS），而非 Bridge 端。本次 E2E 测试只部署了 Bridge 的新二进制，本地 MCP Server 仍运行旧代码。
-- **影响**：exec 返回值中缺少 `terminal_state` 和 `cursor` 字段。
-- **解决**：重启本地 MCP Server 即可生效（代码已正确实现，非 bug）。
-- **其他工具**：capture_pane、wait_stable、wait_for_text、pane_info 均在 Bridge 端处理，已正确返回新字段。
