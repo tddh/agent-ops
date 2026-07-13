@@ -51,6 +51,8 @@ graph LR
 | **端口转发**    | 通过 QUIC 隧道访问远程内网服务（数据库、API 等）                                              |
 | **多主机编排**   | 主机注册表 + 分组/标签/模式过滤，broadcast_keys 多窗格广播                                    |
 | **操作审计**    | SQLite 审计日志，每次工具调用自动记录，支持 CLI 查询/统计/清理                                     |
+| **终端状态感知**  | `capture_pane`、`exec`、`wait_for_text`、`wait_stable`、`pane_info` 返回 `terminal_state`（ready/running/editor/pager/password/...）和光标位置，让 AI Agent 理解终端当前状态 |
+| **exec 安全检查** | `exec` 在终端非 `ready` 状态时拒绝执行（如在 vim、less、密码提示中），返回 `refused: true` 并给出操作建议，防止命令注入到非 shell 上下文 |
 
 ## 快速开始
 

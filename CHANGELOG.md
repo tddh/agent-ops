@@ -16,6 +16,13 @@
   - 1 小时空闲超时 + 15 秒 keepalive，适合长连接场景
   - 64KB 缓冲区，支持 TCP 半关闭处理
   - 完整审计日志记录
+- **终端状态感知**：新增 `terminal_state.rs` 模块，`TerminalState` 枚举覆盖 8 种终端状态（ready/running/password/confirm/repl/editor/pager/unknown）
+  - 5 个工具（`capture_pane`、`exec`、`wait_for_text`、`wait_stable`、`pane_info`）新增 `terminal_state` 和 `cursor` 返回字段
+  - 24 个单元测试覆盖启发式检测逻辑
+- **Exec 执行前安全检查**：`exec` 执行命令前检测终端状态，非 `ready` 状态自动拒绝执行
+  - 新增响应字段：`pre_terminal_state`（执行前状态）和 `refused`（是否被拒绝）
+  - 防止命令注入到 vim/less/密码提示/REPL 等非 shell 上下文
+  - 向后兼容：检测失败时正常执行，不影响已有用法
 
 ### Removed
 - **移除 TCP/TLS 回退传输**：MCP 与 Bridge 之间仅使用 QUIC 协议，删除 TCP listener、yamux 多路复用、`proxy_legacy`、`BridgeStream::Tcp` 等约 700 行代码。移除 `tokio-rustls`（MCP 侧）和 `tokio-yamux`（Bridge 侧）依赖
@@ -31,6 +38,7 @@
 
 ### Security
 - host_filter 通配符过滤从手写正则改为 `glob::Pattern`，消除 ReDoS 风险
+- Exec 执行前终端状态检查：防止在 vim/less/密码提示/REPL 等非 shell 上下文中注入命令，避免意外数据修改或信息泄露
 
 ## [0.1.0] — 2026-07-02
 
