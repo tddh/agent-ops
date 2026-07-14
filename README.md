@@ -1,56 +1,64 @@
 # agent-ops
 
-> Secure infrastructure for AI agents operating Linux hosts — persistent terminal sessions powered by rmux, full-chain audit logging, MCP-native interface for all major AI clients, with file transfer and multi-host orchestration.
+> Secure infrastructure for AI agents and human operators managing Linux hosts — persistent terminal sessions powered by rmux, full-chain audit logging, MCP-native interface for AI clients + CLI PTY passthrough for humans, with file transfer and multi-host orchestration.
 
 [中文文档](README.zh.md)
 
 ## Why agent-ops?
 
-AI agents have evolved from "generating commands for humans" to **autonomously operating terminals** — deploying services, diagnosing failures, running long builds and training jobs, all without human intervention. But traditional terminal tools (SSH, tmux) were designed for human interaction, not programmatic API calls. agent-ops is built on **rmux**, turning terminal sessions from a human interface into a programmable resource, with three production-grade layers on top.
+AI agents have evolved from "generating commands for humans" to **autonomously operating terminals** — deploying services, diagnosing failures, running long builds and training jobs, all without human intervention. But traditional terminal tools (SSH, tmux) were designed for human interaction, not programmatic API calls. agent-ops is built on **rmux**, turning terminal sessions from a human interface into a programmable resource for both AI agents (via MCP) and human operators (via CLI PTY passthrough), with three production-grade layers on top.
 
 Three problems stand between agent prototypes and production deployment, and existing tools (plain SSH MCP servers, basic tmux wrappers) largely ignore them:
 
 - **Reliability**: Plain SSH drops running processes on disconnect — long-running tasks fail mid-flight. Traditional tmux automation relies on `send-keys + sleep + grep`, where any timing drift breaks the workflow.
 - **Auditability**: When AI operates servers in production, you must trace **who did what, when, on which machine, and with what result**. Most SSH tools lack built-in audit capabilities entirely.
-- **Security boundary**: Handing SSH keys directly to an AI client is a massive attack surface. agent-ops uses Bridge proxy + Token auth + TLS encryption to confine server access to the target host — the AI side never holds server credentials.
+- **Security boundary**: Handing SSH keys directly to an AI client is a massive attack surface. agent-ops uses Bridge proxy + Token auth + TLS encryption to confine server access to the target host — the client side (both MCP and CLI) never holds server credentials.
 
-The three layers: **Protocol layer** (MCP standard interface, works with any AI client), **Management layer** (multi-host registry, group/tag filtering, broadcast operations), and **Compliance layer** (structured SQLite audit trail, ready for operational traceability). Together they fill the infrastructure gap between agent prototypes and production readiness.
+The three layers: **Protocol layer** (MCP standard interface for AI clients + CLI PTY passthrough for human operators), **Management layer** (multi-host registry, group/tag filtering, broadcast operations), and **Compliance layer** (structured SQLite audit trail covering both MCP and CLI operations, ready for operational traceability). Together they fill the infrastructure gap between agent prototypes and production readiness.
 
 ### Where does it fit?
 
-agent-ops is not a replacement for SSH or Ansible — it's the **orchestration layer** that sits above them:
+agent-ops is not a replacement for SSH or Ansible — it's the **orchestration layer** that gives AI agents and humans a unified interface to operate remote Linux hosts:
 
 | Layer | Role | Tool |
 |-------|------|------|
-| **Orchestration** | AI-driven decision, file round-trip, cross-host context | agent-ops |
+| **Orchestration** | AI + human decision, terminal access, file round-trip, cross-host context | agent-ops (MCP + CLI) |
 | **Execution** | Declarative, idempotent, repeatable automation | Ansible (or raw shell) |
 | **Transport** | Encrypted, reliable, persistent connection | agent-ops (QUIC) |
 
-An example — if you already use Ansible, here's one way to combine them:
+agent-ops doesn't care what runs inside the terminal — raw shell commands, Ansible playbooks, build scripts, or interactive debugging. It provides the **persistent session + audit trail + multi-host orchestration**, and you bring the tools.
+
+**A few patterns:**
 
 ```
-AI Agent
-  │
-  ├─ agent-ops ──── Bastion host (running rmux-bridge)
-  │     ├── exec: git clone Ansible playbook repo
-  │     ├── exec: ansible-playbook run
-  │     ├── file_download: pull configs for AI review
-  │     ├── file_upload: push modified configs back
-  │     └── session: full-chain audit trail
-  │
-  └─ Bastion ──── Ansible ──── All managed devices
-                     ├── Linux servers (native SSH modules)
-                     ├── Switches (network modules)
-                     └── BMC (Redfish modules)
-```
+# Pattern 1: AI reads system state, makes decisions, executes fixes
+AI Agent (via MCP)
+  → exec: cat /proc/loadavg && df -h          # read state
+  → AI reasons: "disk full on /var/log"
+  → exec: du -sh /var/log/* | sort -rh | head  # diagnose
+  → exec: journalctl --vacuum-size=500M        # fix
+  → audit trail: every step recorded in SQLite
 
-This is just one pattern. You can also deploy the bridge directly on target hosts for direct AI operation, or deploy bridges on multiple hosts and manage them in parallel with `batch_exec`. agent-ops doesn't prescribe any specific topology.
+# Pattern 2: Human investigates via CLI while AI assists
+Human (via CLI PTY passthrough)
+  → agent-ops connect tf01  # same session AI was working in
+  → vim /etc/nginx/nginx.conf  # human edits in familiar tools
+  AI Agent (via MCP)
+  → exec: nginx -t && systemctl reload nginx  # AI validates & applies
+
+# Pattern 3: Human or AI delegates to Ansible for complex workflows
+AI/Human (via MCP or CLI)
+  → exec: git clone ansible-playbook-repo
+  → exec: ansible-playbook -i inventory deploy.yml
+  → audit trail: who ran which playbook, when, on which hosts
+```
 
 **Use cases:**
-- **Bulk deployment & configuration**: AI pulls Playbooks → reviews and modifies locally → pushes back and executes, with full Git version control
-- **Incident diagnosis & recovery**: AI dynamically reads node state → determines root cause → executes repairs, instead of rigid pre-written automation
-- **Interactive operations**: Complex operations requiring persistent sessions (builds, long-running task monitoring, interactive debugging)
-- **Compliance auditing**: Full-chain audit trail (Git history + agent-ops session + Ansible logs), every step traceable
+- **Incident response**: AI or human jumps into a live session, reads system state, diagnoses root cause, and executes repairs — all within the same persistent terminal
+- **Ad-hoc operations**: Quick one-off commands across multiple hosts (`batch_exec`), file transfers, port forwarding — no Playbook needed
+- **Interactive debugging**: Persistent sessions for builds, long-running task monitoring, or interactive troubleshooting via both MCP (AI) and CLI PTY passthrough (human)
+- **Delegated automation**: Use agent-ops to invoke Ansible, Terraform, or any CLI tool — agent-ops provides the secure tunnel and audit trail, the tool provides the logic
+- **Compliance auditing**: Full-chain audit trail covering both AI and human operations on every host, queryable via `agent-ops-mcp audit query`
 
 ## Architecture
 
@@ -222,7 +230,7 @@ After an AI-driven troubleshooting session:
 ```
 
 #### 1. Collection (built-in)
-The existing **audit system** records every MCP tool invocation — `exec`, `capture_pane`, `session_create`, etc. — with timestamps, host, success/failure, and error messages. No changes needed.
+The existing **audit system** records every MCP tool invocation and CLI operation — `exec`, `capture_pane`, `session_create`, `connect`, etc. — with timestamps, host, success/failure, and error messages. No changes needed.
 
 #### 2. Extraction (AI-driven)
 When the user explicitly triggers "save this session as knowledge," the AI reviews the full conversation history plus the audit trail for that session. It extracts:
@@ -263,7 +271,7 @@ This design keeps agent-ops focused on operations while enabling teams to build 
 
 ## Tools
 
-62 MCP tools covering the full terminal lifecycle:
+62 MCP tools covering the full terminal lifecycle, plus `audit query/stats/cleanup` CLI subcommands for human operators:
 
 | Category | Tools |
 |----------|-------|

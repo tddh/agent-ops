@@ -1,56 +1,64 @@
 # agent-ops
 
-> AI Agent 远程操作 Linux 主机的安全基础设施 —— 基于 rmux 提供持久化终端会话与全链路审计日志，通过 MCP 协议对接所有主流 AI 客户端，支持文件传输、端口转发与多主机编排。
+> AI Agent 与人类运维远程操作 Linux 主机的安全基础设施 —— 基于 rmux 提供持久化终端会话与全链路审计日志，AI 端通过 MCP 协议调用，人类端通过 CLI PTY 透传直连，支持文件传输、端口转发与多主机编排。
 
 [English](README.md)
 
 ## 为什么需要 agent-ops？
 
-AI Agent 的推理和工具调用能力已经足够强，正在从「帮你生成命令」走向「自主接管终端执行任务」——部署服务、排查故障、跑编译训练长任务，全程无需人工介入。但传统终端工具（SSH、tmux）从设计之初就是给人用的交互工具，不是给程序调用的编程接口。agent-ops 基于 **rmux** 构建，把终端会话从人机交互界面变成了程序可调度的资源，在这个基础之上补了三层面向生产的封装。
+AI Agent 的推理和工具调用能力已经足够强，正在从「帮你生成命令」走向「自主接管终端执行任务」——部署服务、排查故障、跑编译训练长任务，全程无需人工介入。但传统终端工具（SSH、tmux）从设计之初就是给人用的交互工具，不是给程序调用的编程接口。agent-ops 基于 **rmux** 构建，把终端会话变成了 AI Agent（通过 MCP）和人类运维（通过 CLI PTY 透传）都能操作的可编程资源，在这个基础之上补了三层面向生产的封装。
 
 生产环境落地有三个绕不开的问题，现有工具几乎都没有系统性解决：
 
 - **可靠性**：纯 SSH 方案断连即进程终止，长任务极易失败；传统 tmux 自动化靠 `send-keys + sleep + grep`，时序偏移就会出错。
 - **可审计**：企业让 AI 操作服务器，必须追溯「什么时间、哪台机器、执行了什么命令、结果如何」。纯 SSH 工具大多没有内置审计能力。
-- **安全边界**：直接把 SSH 密钥交给 AI 客户端风险极高。agent-ops 通过 Bridge 代理 + Token 认证 + TLS 加密，将服务器权限收敛在目标主机本地，AI 端不直接持有服务器密钥。
+- **安全边界**：直接把 SSH 密钥交给 AI 客户端风险极高。agent-ops 通过 Bridge 代理 + Token 认证 + TLS 加密，将服务器权限收敛在目标主机本地，客户端（MCP + CLI）均不直接持有服务器密钥。
 
-这三层分别是：**协议层**（MCP 标准接口对接所有主流 Agent）、**管理层**（多主机注册、分组标签、批量广播操作）、**合规层**（全链路结构化 SQLite 审计日志），补上了 AI Agent 从原型到生产落地的基础设施缺口。
+这三层分别是：**协议层**（MCP 标准接口对接 AI Agent + CLI PTY 透传供人类直接操作）、**管理层**（多主机注册、分组标签、批量广播操作）、**合规层**（全链路结构化 SQLite 审计日志，同时覆盖 MCP 和 CLI 操作），补上了 AI Agent 从原型到生产落地的基础设施缺口。
 
 ### agent-ops 与 Ansible、SSH 的关系
 
-agent-ops 不是 SSH 或 Ansible 的替代品，而是**运行在它们之上的编排层**：
+agent-ops 不是 SSH 或 Ansible 的替代品，而是为 AI Agent 和人类运维提供统一远程操作界面的**编排层**：
 
 | 层次      | 职责                       | 工具                |
 | ------- | ------------------------ | ----------------- |
-| **编排层** | AI 动态决策、文件上下行闭环、跨主机上下文保持 | agent-ops         |
+| **编排层** | AI + 人类动态决策、终端访问、文件上下行、跨主机上下文保持 | agent-ops（MCP + CLI）  |
 | **执行层** | 声明式、幂等、可重复的自动化           | Ansible（或裸 shell） |
 | **传输层** | 加密、可靠、持久化连接              | agent-ops（QUIC）   |
 
-举个例子 —— 如果你已经有 Ansible 管理体系，可以这样组合：
+agent-ops 不关心终端里跑什么 —— 裸 shell 命令、Ansible Playbook、编译脚本、交互式排错，都可以。它提供的是**持久化会话 + 审计追踪 + 多主机编排**，工具由你来选。
+
+**几种典型模式：**
 
 ```
-AI Agent (你的 AI 客户端)
-  │
-  ├─ agent-ops ──── 跳板机 (部署 rmux-bridge)
-  │     ├── exec: git clone/pull Ansible Playbook 仓库
-  │     ├── exec: ansible-playbook 执行
-  │     ├── file_download: 拉取配置文件供 AI 分析
-  │     ├── file_upload: 推送修改后的配置
-  │     └── session: 全链路操作记录
-  │
-  └─ 跳板机 ──── Ansible ──── 全网设备
-                    ├── Linux 服务器 (原生 SSH 模块)
-                    ├── 交换机 (网络模块)
-                    └── BMC (Redfish 模块)
-```
+# 模式 1：AI 读取状态、做决策、执行修复
+AI Agent（通过 MCP）
+  → exec: cat /proc/loadavg && df -h            # 读取系统状态
+  → AI 推理："磁盘满了，/var/log 占用最多"
+  → exec: du -sh /var/log/* | sort -rh | head   # 诊断
+  → exec: journalctl --vacuum-size=500M          # 修复
+  → audit trail: 每一步都记录在 SQLite 中
 
-这只是其中一种模式。你也可以直接在目标主机上部署 bridge，AI 直接操作；也可以多台主机各自部署 bridge 用 `batch_exec` 并行管理。agent-ops 不绑定任何特定的拓扑结构。
+# 模式 2：人类 CLI 介入调查，AI 辅助
+人类（通过 CLI PTY 透传）
+  → agent-ops connect tf01   # 进入 AI 正在操作的同一会话
+  → vim /etc/nginx/nginx.conf  # 用熟悉的工具手动编辑
+  AI Agent（通过 MCP）
+  → exec: nginx -t && systemctl reload nginx   # AI 验证并生效
+
+# 模式 3：人类或 AI 委托 Ansible 执行复杂工作流
+AI/人类（通过 MCP 或 CLI）
+  → exec: git clone ansible-playbook-repo
+  → exec: ansible-playbook -i inventory deploy.yml
+  → audit trail: 谁、何时、在哪台机器上执行了什么 Playbook
+```
 
 **适用场景：**
-- **批量部署与配置**：AI 拉取 Playbook → 本地分析修改 → 推回执行，全程 Git 版本管理
-- **故障诊断与恢复**：AI 动态读取各节点状态 → 判断根因 → 执行修复，而非写死的自动化流程
-- **交互式运维**：需要保持会话状态的复杂操作（编译、长任务监控、交互式排错）
-- **合规审计**：全链路操作记录（Git 版本 + agent-ops session + Ansible 日志），每一步可追溯
+- **故障排查**：AI 或人类进入一个活跃会话，读取系统状态、诊断根因、执行修复 —— 全部在一个持久化终端内完成
+- **临时运维**：跨多台主机快速执行一次性命令（`batch_exec`）、文件传输、端口转发 —— 无需写 Playbook
+- **交互式排错**：编译、长任务监控、交互式调试等需要持久会话的场景 —— 支持 MCP（AI）和 CLI PTY 透传（人类）两种方式
+- **委托自动化**：通过 agent-ops 调用 Ansible、Terraform 或任何 CLI 工具 —— agent-ops 提供安全通道和审计追踪，工具负责执行逻辑
+- **合规审计**：覆盖 AI 和人类在每台主机上的所有操作，全链路可追溯，通过 `agent-ops-mcp audit query` 查询
 
 ## 架构
 
@@ -221,7 +229,7 @@ AI 辅助完成一次问题排查后：
 ```
 
 #### 1. 采集层（已内置）
-现有的**审计系统**自动记录每次 MCP 工具调用 —— `exec`、`capture_pane`、`session_create` 等 —— 包含时间戳、目标主机、成功/失败状态、错误信息。无需额外改动。
+现有的**审计系统**自动记录每次 MCP 工具调用和 CLI 操作 —— `exec`、`capture_pane`、`session_create`、`connect` 等 —— 包含时间戳、目标主机、成功/失败状态、错误信息。无需额外改动。
 
 #### 2. 提取层（AI 驱动）
 当用户主动触发「把这个排查沉淀成知识」时，AI 回顾本次会话的完整对话历史 + 对应审计记录，提取：
@@ -262,7 +270,7 @@ echo "$(cat)" >> knowledge.jsonl && git commit -am "新增排障经验条目"
 
 ## 工具列表
 
-共 62 个 MCP 工具，覆盖完整终端生命周期：
+共 62 个 MCP 工具，覆盖完整终端生命周期；另有 `audit query/stats/cleanup` CLI 子命令供人类直接查询审计日志：
 
 | 类别 | 工具 |
 |------|------|
