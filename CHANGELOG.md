@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+- **代码组织重构**：大文件拆分，提升可维护性
+  - `tools.rs` (3661行) → `tools/` 目录 12 个子模块
+  - `protocol.rs` (1965行) → `protocol/` 目录 7 个子模块
+  - `main.rs` (1163行) → `handler.rs` + `audit_cli.rs` + `schema.rs`
+  - `router.rs` `RwLock::unwrap()` 改为 `expect()`，防止 poisoned lock panic
+
 ### Added
 - **配置热加载**：支持在不重启 MCP Server 的情况下重新加载 `hosts.yaml` 配置
   - 新增 `reload_config` MCP 工具，AI Agent 可主动触发

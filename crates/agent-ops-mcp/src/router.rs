@@ -58,7 +58,7 @@ impl HostRouter {
 
         let count = new_hosts.len();
         {
-            let mut hosts = self.hosts.write().unwrap();
+            let mut hosts = self.hosts.write().expect("host registry lock poisoned");
             *hosts = new_hosts;
         }
         tracing::info!(
@@ -73,17 +73,29 @@ impl HostRouter {
     /// Returns an owned clone — the caller receives a snapshot consistent with
     /// the read lock held at call time.
     pub fn get(&self, name: &str) -> Option<HostConfig> {
-        self.hosts.read().unwrap().get(name).cloned()
+        self.hosts
+            .read()
+            .expect("host registry lock poisoned")
+            .get(name)
+            .cloned()
     }
 
     /// Returns all registered hosts as a flat list (owned).
     pub fn list(&self) -> Vec<HostConfig> {
-        self.hosts.read().unwrap().values().cloned().collect()
+        self.hosts
+            .read()
+            .expect("host registry lock poisoned")
+            .values()
+            .cloned()
+            .collect()
     }
 
     /// Returns the total number of registered hosts.
     pub fn len(&self) -> usize {
-        self.hosts.read().unwrap().len()
+        self.hosts
+            .read()
+            .expect("host registry lock poisoned")
+            .len()
     }
 }
 

@@ -1,6 +1,6 @@
 # agent-ops 部署文档
 
-> 最后更新：2026-07-06
+> 最后更新：2026-07-14
 
 ## 架构
 
@@ -91,7 +91,7 @@ BRIDGE_TOKEN="<your-token>" bash deploy/install-bridge.sh \
 |------|------|
 | `just certs` | 生成本地测试用自签名证书 |
 | `just certs-host host=<name>` | 为指定主机生成 TLS 证书 |
-| `just run-bridge host=<name>` | 本地启动 bridge（开发/测试） |
+| `just run-bridge token=<your-token>` | 本地启动 bridge（开发/测试） |
 
 **生成的 systemd 服务文件**（`/etc/systemd/system/rmux-bridge.service`）：
 
@@ -139,8 +139,8 @@ ssh root@<your-bridge-ip> "systemctl status rmux-bridge --no-pager"
 | `--quic-listen-addr` | `0.0.0.0:9778` | QUIC/UDP 监听地址（终端操作 + 文件传输） |
 | `--max-connections` | `256` | 最大并发连接数，0=无限制（`MAX_CONNECTIONS` 环境变量） |
 | `--rmux-socket` | `/tmp/rmux-1000/default` | RMUX daemon Unix socket 路径 |
-| `--tls-cert` | `certs/<host>.crt` | TLS 证书路径（CA 签发） |
-| `--tls-key` | `certs/<host>.key` | TLS 私钥路径 |
+| `--tls-cert` | `certs/bridge.crt` | TLS 证书路径（CA 签发） |
+| `--tls-key` | `certs/bridge.key` | TLS 私钥路径 |
 | `--auth-token` | 环境变量 `BRIDGE_AUTH_TOKEN` | 认证令牌 |
 | `--log-level` | `info` | 日志级别：trace/debug/info/warn/error（`RUST_LOG` 环境变量） |
 

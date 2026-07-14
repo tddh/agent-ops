@@ -7,7 +7,6 @@ Requires=rmux-daemon.service
 Type=simple
 EnvironmentFile=/opt/agent-ops/bridge.env
 ExecStart=/opt/agent-ops/rmux-bridge \
-    --listen-addr 0.0.0.0:9778 \
     --quic-listen-addr 0.0.0.0:9778 \
     --max-connections 256 \
     --rmux-socket %h/.rmux/rmux-0/default \

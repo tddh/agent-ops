@@ -267,7 +267,7 @@ This design keeps agent-ops focused on operations while enabling teams to build 
 
 | Category | Tools |
 |----------|-------|
-| Host | `host_list`, `host_filter` |
+| Host | `host_list`, `host_filter`, `reload_config` |
 | Session | `session_create`, `session_list`, `session_attach`, `session_detach`, `kill_session` |
 | Input | `send_keys`, `send_text`, `broadcast_keys` |
 | Output | `capture_pane`, `capture_region`, `wait_for_text`, `wait_for_bytes`, `find_pane_text`, `find_text_all`, `stream_pane` |

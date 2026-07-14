@@ -1152,8 +1152,13 @@ tunnel_create host="tf01" local_port=8080 remote_host="api.internal" remote_port
 
 | status | 含义 |
 |--------|------|
-| `restarted` | ✅ 部署成功 |
+| `restarted` | ✅ 部署成功，服务已重启 |
 | `first_time_deploy` | systemd unit 不存在，走 SSH 首次部署 |
-| `path_mismatch` | 指定的路径与 systemd ExecStart 不一致 |
+| `host_not_found` | 主机不在 registry 中 |
 | `bridge_unreachable` | 无法连接目标主机 |
+| `session_failed` | 创建 session 失败 |
+| `path_mismatch` | 指定的路径与 systemd ExecStart 不一致 |
 | `upload_failed` | 文件传输失败 |
+| `replace_failed` | 替换二进制文件失败 |
+| `reconnect_failed` | 重启后无法重连 bridge |
+| `verify_failed` | 重启后验证 service 状态失败 |

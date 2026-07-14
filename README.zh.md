@@ -266,7 +266,7 @@ echo "$(cat)" >> knowledge.jsonl && git commit -am "新增排障经验条目"
 
 | 类别 | 工具 |
 |------|------|
-| 主机管理 | `host_list`, `host_filter` |
+| 主机管理 | `host_list`, `host_filter`, `reload_config` |
 | 会话管理 | `session_create`, `session_list`, `session_attach`, `session_detach`, `kill_session` |
 | 终端输入 | `send_keys`, `send_text`, `broadcast_keys` |
 | 终端输出 | `capture_pane`, `capture_region`, `wait_for_text`, `wait_for_bytes`, `find_pane_text`, `find_text_all`, `stream_pane` |

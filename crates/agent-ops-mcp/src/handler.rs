@@ -1,0 +1,81 @@
+use crate::tools;
+use serde_json::{json, Value};
+use std::sync::Arc;
+use tokio::io::{stdin, stdout, AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+pub async fn run_mcp_stdio_loop(
+    ctx: Arc<tools::ToolContext>,
+    tools_def: Value,
+) -> anyhow::Result<()> {
+    let stdin = BufReader::new(stdin());
+    let mut stdout = stdout();
+    let mut lines = stdin.lines();
+
+    while let Some(line) = lines.next_line().await? {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let request: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(e) => {
+                let err = json_rpc_error(None, -32700, &format!("Parse error: {e}"));
+                stdout.write_all(err.to_string().as_bytes()).await?;
+                stdout.write_all(b"\n").await?;
+                stdout.flush().await?;
+                continue;
+            }
+        };
+
+        let method = request["method"].as_str().unwrap_or("");
+        let id = request.get("id").cloned();
+
+        let response = match method {
+            "tools/list" => json_rpc_response(id, &tools_def),
+            "tools/call" => {
+                let tool_name = request["params"]["name"].as_str().unwrap_or("");
+                let args = request["params"]["arguments"].clone();
+                match tools::execute_tool(&ctx, tool_name, args).await {
+                    Ok(result) => json_rpc_response(
+                        id,
+                        &json!({
+                            "content": [{ "type": "text", "text": result.to_string() }]
+                        }),
+                    ),
+                    Err(e) => json_rpc_error(id, -32000, &format!("Tool error: {e}")),
+                }
+            }
+            "initialize" => {
+                let agent_name = request["params"]["clientInfo"]["name"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_string();
+                *ctx.agent_name.lock().unwrap_or_else(|e| e.into_inner()) = agent_name;
+                json_rpc_response(
+                    id,
+                    &json!({
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": { "tools": {} },
+                        "serverInfo": { "name": "agent-ops-mcp", "version": env!("CARGO_PKG_VERSION") },
+                        "instructions": "You are an AI agent managing remote Linux hosts via agent-ops. 你是通过 agent-ops 运维远程主机的 AI Agent。\n\n## Rules\n1. If a host is in the agent-ops registry (`host_list`), ALL operations MUST use agent-ops tools. NEVER run ssh/scp/rsync directly.\n2. Default session: `\"agent-ops\"`. Always `session_attach` first; `session_create` if not found.\n3. File transfer: `file_upload` / `file_download`. Commands: `exec` for one-shot (auto-waits, default 200 lines / 30s timeout, set `max_lines=0` for everything), `send_keys` for interactive programs.\n4. Use `wait_for_text` to block until a pattern appears — do NOT poll `capture_pane` in a loop.\n5. For long-running commands (tail -f, builds), use `stream_pane` for incremental output instead of polling `capture_pane`. `session_attach`/`session_detach` only check existence, they don't attach/detach.\n\n## Workflow\n`host_list` → `session_attach host=<h> session_name=\"agent-ops\"` (or `session_create`) → `exec`/`send_keys` → `capture_pane`/`wait_for_text` → `close_pane` to clean up.\n- Default pane after session_create: `%0`.\n- `exec` supports `clear_screen: true` and `timeout_ms` for long commands.\n- After closing a pane: `respawn_pane` to restart the shell.\n- `cmd_escape` for direct rmux CLI access (advanced)."
+                    }),
+                )
+            }
+            _ => json_rpc_error(id, -32601, &format!("Method not found: {method}")),
+        };
+
+        stdout.write_all(response.to_string().as_bytes()).await?;
+        stdout.write_all(b"\n").await?;
+        stdout.flush().await?;
+    }
+
+    Ok(())
+}
+
+pub fn json_rpc_response(id: Option<Value>, result: &Value) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "result": result })
+}
+
+pub fn json_rpc_error(id: Option<Value>, code: i64, message: &str) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+}

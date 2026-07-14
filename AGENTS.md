@@ -27,6 +27,7 @@
 ```
 agent-ops/
 ├── crates/              # Rust crates
+│   ├── agent-ops-cli/   # CLI 交互式终端
 │   ├── agent-ops-core/  # 共享类型（HostConfig, AuditEvent, AuditAction）
 │   ├── agent-ops-mcp/   # MCP Server
 │   └── rmux-bridge/     # Bridge proxy

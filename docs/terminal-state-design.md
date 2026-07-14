@@ -1,6 +1,6 @@
 # 终端状态感知（Terminal State Awareness）设计方案
 
-> 状态：Final v4（经 Oracle 审查 + PiloTY 对比 + E2E 测试验证） | 日期：2026-07-13
+> 状态：Final v5（经 Oracle 审查 + PiloTY 对比 + E2E 测试验证） | 日期：2026-07-14
 
 ---
 
@@ -258,7 +258,7 @@ Unknown
 **实现**：`capture_pane` Path A 已经调用 `pane.snapshot()`，只需从已获取的 snapshot 中提取 cursor 并运行检测算法。零额外 RPC。
 
 ```rust
-// protocol.rs handle_capture_pane Path A 改动
+// protocol/output.rs handle_capture_pane Path A 改动
 let snapshot = pane.snapshot().await?;
 let text = snapshot.visible_text();
 let state = detect_terminal_state(&text, snapshot.cursor.col, snapshot.cursor.visible);
@@ -332,13 +332,13 @@ json!({
 }
 ```
 
-**实现依赖链**：`exec_in_session` 在 MCP 层实现（`tools.rs`），通过 JSON 帧与 bridge 通信。
+**实现依赖链**：`exec_in_session` 在 MCP 层实现（`tools/exec.rs`），通过 JSON 帧与 bridge 通信。
 exec 循环中最后一次 `capture_pane` 调用走 bridge 的 `handle_capture_pane` Path A。
 因此需要**先完成改动点 4.1**（bridge capture_pane 返回 terminal_state），
 然后 exec 从最后一次 capture_pane 响应中提取 `terminal_state` 和 `cursor` 字段即可，零额外 RPC。
 
 ```rust
-// tools.rs exec_in_session 改动（伪代码）
+// tools/exec.rs exec_in_session 改动（伪代码）
 // 在检测到 sentinel 后，从最后一次 capture_pane 响应中提取：
 let terminal_state = resp.get("terminal_state");
 let cursor = resp.get("cursor");
@@ -392,7 +392,7 @@ let cursor = resp.get("cursor");
 | 文件 | 改动 | 复杂度 |
 |------|------|:------:|
 | `crates/rmux-bridge/src/terminal_state.rs` | **新增**：`TerminalState` 枚举 + `detect_terminal_state()` 函数 | 低 |
-| `crates/rmux-bridge/src/protocol.rs` | **修改**：5 个 handler 的返回值添加 `terminal_state` + `cursor` | 低 |
+| `crates/rmux-bridge/src/protocol/output.rs` | **修改**：5 个 handler 的返回值添加 `terminal_state` + `cursor` | 低 |
 | `crates/rmux-bridge/src/main.rs` | **修改**：`mod terminal_state;` 声明 | 极低 |
 | `crates/rmux-bridge/src/terminal_state.rs` | **新增**：单元测试（10+ 测试用例） | 低 |
 | `docs/TOOLS.md` | **修改**：更新 5 个工具的返回值文档 | 低 |
@@ -401,7 +401,7 @@ let cursor = resp.get("cursor");
 
 | 文件 | 改动 | 理由 |
 |------|------|------|
-| `crates/agent-ops-mcp/src/tools.rs` | `exec_in_session` 从最后一次 capture_pane 响应中提取 `terminal_state` + `cursor` | exec 在 MCP 层实现，依赖 bridge capture_pane 先返回这些字段 |
+| `crates/agent-ops-mcp/src/tools/exec.rs` | `exec_in_session` 从最后一次 capture_pane 响应中提取 `terminal_state` + `cursor` | exec 在 MCP 层实现，依赖 bridge capture_pane 先返回这些字段 |
 
 ### 5.3 不改动的文件
 

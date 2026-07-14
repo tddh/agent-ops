@@ -197,7 +197,7 @@ AI Agent 继续通过 MCP exec 操作同一个 pane %0：
 │  │ • send_keys         │    │ • agent-ops download │    │
 │  │ • file_upload       │    │ • agent-ops tunnel   │    │
 │  │ • batch_exec        │    │                      │    │
-│  │ • ...（61 个工具）   │    │                      │    │
+│  │ • ...（62 个工具）   │    │                      │    │
 │  └─────────────────────┘    └─────────────────────┘    │
 │                                                         │
 │  共享基础设施：                                           │
@@ -783,7 +783,7 @@ crates/agent-ops-cli/
     ├── main.rs          # CLI 入口（clap）
     ├── connect.rs       # 交互式连接核心逻辑
     ├── terminal.rs      # 本地终端管理（crossterm raw mode）
-    └── protocol.rs      # 控制流/数据流协议编解码
+    └── protocol/         # 控制流/数据流协议编解码
 ```
 
 #### 6.3.2 Cargo.toml
@@ -1579,7 +1579,7 @@ AI agent 不需要"看到"终端，它需要的是发送命令和读取输出。
 
 | 组件 | 文件 | 改动类型 | 代码量 |
 |------|------|---------|--------|
-| MCP Server | `tools.rs` | 新增工具 | ~150 行 |
+| MCP Server | `tools/exec.rs` | 新增工具 | ~150 行 |
 | MCP Server | `interactive.rs` | 新增模块 | ~200 行 |
 | MCP Server | `stream_manager.rs` | 新增模块 | ~150 行 |
 | **总计** | | | **~500 行** |
@@ -1598,5 +1598,4 @@ AI agent 不需要"看到"终端，它需要的是发送命令和读取输出。
 | [mish 设计文档](https://github.com/amedeedaboville/mish) | Sans-IO SSP + QUIC 终端 |
 | [Quil 架构 ADR](https://github.com/artyomsv/quil/blob/master/docs/architecture.md) | Ghost Buffer + 版本握手 |
 | [VS Code RemotePty](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/browser/remotePty.ts) | start/detach/input/resize/ack 五原语 |
-| [docs/stream-pane-design.md](./stream-pane-design.md) | 本项目现有输出流设计 |
 | [docs/DEPLOY.md](./DEPLOY.md) | 本项目部署架构 |
