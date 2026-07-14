@@ -1,14 +1,19 @@
 //! In-memory host registry that loads target host configurations from a YAML file
-//! and provides lookup, listing, and counting operations.
+//! and provides lookup, listing, and counting operations. Supports hot-reload via
+//! `reload()` for zero-downtime configuration updates.
 
 use agent_ops_core::types::HostConfig;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 
 /// Maps host names to their `HostConfig` for fast lookup by tool handlers.
+/// Wraps the inner map in a `RwLock` to support atomic configuration reloads
+/// without restarting the MCP server.
 pub struct HostRouter {
-    hosts: HashMap<String, HostConfig>,
+    hosts: RwLock<HashMap<String, HostConfig>>,
+    source_path: PathBuf,
 }
 
 impl HostRouter {
@@ -26,23 +31,59 @@ impl HostRouter {
             .map(|h| (h.name.clone(), h))
             .collect();
 
-        tracing::info!("loaded {} hosts from {}", hosts.len(), path.display());
-        Ok(Self { hosts })
+        let count = hosts.len();
+        tracing::info!("loaded {} hosts from {}", count, path.display());
+        Ok(Self {
+            hosts: RwLock::new(hosts),
+            source_path: path.to_path_buf(),
+        })
+    }
+
+    /// Reloads the host registry from the original source file.
+    /// Returns the number of hosts loaded.
+    /// On parse error, the existing configuration is preserved.
+    pub fn reload(&self) -> Result<usize> {
+        let content = std::fs::read_to_string(&self.source_path).with_context(|| {
+            format!("failed to read hosts file: {}", self.source_path.display())
+        })?;
+
+        let registry: agent_ops_core::types::HostRegistry =
+            serde_yaml::from_str(&content).context("failed to parse hosts YAML")?;
+
+        let new_hosts: HashMap<String, HostConfig> = registry
+            .hosts
+            .into_iter()
+            .map(|h| (h.name.clone(), h))
+            .collect();
+
+        let count = new_hosts.len();
+        {
+            let mut hosts = self.hosts.write().unwrap();
+            *hosts = new_hosts;
+        }
+        tracing::info!(
+            "reloaded {} hosts from {}",
+            count,
+            self.source_path.display()
+        );
+        Ok(count)
     }
 
     /// Returns the `HostConfig` for the given host name, or `None` if not found.
-    pub fn get(&self, name: &str) -> Option<&HostConfig> {
-        self.hosts.get(name)
+    /// Returns an owned clone — the caller receives a snapshot consistent with
+    /// the read lock held at call time.
+    pub fn get(&self, name: &str) -> Option<HostConfig> {
+        self.hosts.read().unwrap().get(name).cloned()
     }
 
-    /// Returns all registered hosts as a flat list.
-    pub fn list(&self) -> Vec<&HostConfig> {
-        self.hosts.values().collect()
+    /// Returns all registered hosts as a flat list (owned).
+    pub fn list(&self) -> Vec<HostConfig> {
+        self.hosts.read().unwrap().values().cloned().collect()
     }
 
     /// Returns the total number of registered hosts.
     pub fn len(&self) -> usize {
-        self.hosts.len()
+        self.hosts.read().unwrap().len()
     }
 }
 
@@ -191,5 +232,90 @@ hosts:
         let path = std::env::temp_dir().join("agent-ops-nonexistent-file.yaml");
         let result = HostRouter::from_file(&path);
         assert!(result.is_err());
+    }
+
+    // ── Reload tests ──
+
+    #[test]
+    fn test_reload_updates_hosts() {
+        let yaml_v1 = r#"
+hosts:
+  - name: host1
+    bridge_addr: 10.0.0.1:9778
+    bridge_token: tok1
+"#;
+        let path = write_temp_yaml(yaml_v1);
+        let router = HostRouter::from_file(&path).unwrap();
+        assert_eq!(router.len(), 1);
+        assert!(router.get("host1").is_some());
+
+        // Overwrite file with v2 config
+        let yaml_v2 = r#"
+hosts:
+  - name: host1
+    bridge_addr: 10.0.0.1:9778
+    bridge_token: tok1-updated
+  - name: host2
+    bridge_addr: 10.0.0.2:9778
+    bridge_token: tok2
+"#;
+        std::fs::write(&path, yaml_v2).unwrap();
+
+        let count = router.reload().unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(router.len(), 2);
+
+        let h1 = router.get("host1").unwrap();
+        assert_eq!(h1.bridge_token, "tok1-updated");
+        assert!(router.get("host2").is_some());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_reload_preserves_on_parse_error() {
+        let yaml = r#"
+hosts:
+  - name: host1
+    bridge_addr: 10.0.0.1:9778
+    bridge_token: tok1
+"#;
+        let path = write_temp_yaml(yaml);
+        let router = HostRouter::from_file(&path).unwrap();
+        assert_eq!(router.len(), 1);
+
+        // Write broken YAML — existing data must be preserved
+        std::fs::write(&path, "garbage: :: broken").unwrap();
+
+        let result = router.reload();
+        assert!(result.is_err());
+        // Existing data unchanged
+        assert_eq!(router.len(), 1);
+        assert!(router.get("host1").is_some());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_reload_handles_empty_hosts() {
+        let yaml = r#"
+hosts:
+  - name: host1
+    bridge_addr: 10.0.0.1:9778
+    bridge_token: tok1
+"#;
+        let path = write_temp_yaml(yaml);
+        let router = HostRouter::from_file(&path).unwrap();
+        assert_eq!(router.len(), 1);
+
+        // Write empty hosts list
+        std::fs::write(&path, "hosts: []").unwrap();
+
+        let count = router.reload().unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(router.len(), 0);
+        assert!(router.get("host1").is_none());
+
+        let _ = std::fs::remove_file(&path);
     }
 }

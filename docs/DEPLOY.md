@@ -12,7 +12,7 @@
 └─────────────────┘            └──────────────┘ ════════════════════════╝ └──────────────────┘                └─────────┘
 ```
 
-- **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 61 个终端控制工具 + 操作审计 CLI
+- **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 62 个终端控制工具 + 操作审计 CLI
 - **agent-ops-cli**: 命令行工具，人可以直接 PTY 透传 attach 到远程 rmux 会话（`agent-ops connect`）
 - **rmux-bridge**: 部署在每台目标 Linux 主机上，QUIC 加密代理 → RMUX daemon。终端操作与文件传输统一走 QUIC 协议（UDP :9778）
 - **RMUX daemon**: 每个 Linux 主机上的终端多路复用器
@@ -191,6 +191,8 @@ hosts:
     #   - "10.0.1.*:*"                 # glob 通配符
     #   - "*:3306"                     # 所有主机的 MySQL
 ```
+
+> 💡 **热加载**：修改 `hosts.yaml` 后无需重启 MCP Server — 调用 `reload_config` MCP 工具或向进程发送 `kill -HUP <pid>` 即可生效。加载失败时保留原有配置，不影响运行中服务。
 
 ### 8. 配置 MCP Server（OpenCode）
 

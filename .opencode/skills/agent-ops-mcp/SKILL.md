@@ -365,6 +365,7 @@ host_capabilities(host="tf01", check="stream.control")
 | `path traversal rejected` | 路径包含 `..` | 使用不含 `..` 的绝对路径或相对路径 |
 | `tunnel target not in allowed list` | 隧道目标不在白名单中 | 检查 `hosts.yaml` 中的 `allowed_tunnel_targets` 配置 |
 | `host not found` | 主机名不在 registry 中 | `host_list` 检查可用主机 |
+| 修改 `hosts.yaml` 后主机不生效 | 未重载配置 | 调用 `reload_config` 工具或 `kill -HUP <pid>` |
 
 ## 最佳实践
 

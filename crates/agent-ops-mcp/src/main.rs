@@ -84,6 +84,29 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // ── SIGHUP config reload ──
+    let sig_router = Arc::clone(&router);
+    tokio::spawn(async move {
+        let mut sig = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("SIGHUP handler not available (non-unix?): {e}");
+                return;
+            }
+        };
+        loop {
+            sig.recv().await;
+            match sig_router.reload() {
+                Ok(count) => {
+                    tracing::info!("SIGHUP: successfully reloaded {} hosts from config", count);
+                }
+                Err(e) => {
+                    tracing::error!("SIGHUP: config reload failed: {e}");
+                }
+            }
+        }
+    });
+
     let ctx = Arc::new(tools::ToolContext {
         router,
         ca_cert_path: cli.ca_cert,
@@ -118,6 +141,11 @@ async fn main() -> anyhow::Result<()> {
                         "pattern": { "type": "string", "description": "Hostname glob pattern, e.g. prod-web-*, supports * and ? wildcards" }
                     }
                 }
+            },
+            {
+                "name": "reload_config",
+                "description": "Reload the host registry from the hosts.yaml configuration file without restarting the MCP server. Use this after editing hosts.yaml to pick up new, removed, or modified host entries. Returns the number of hosts loaded.",
+                "inputSchema": { "type": "object", "properties": {}, "required": [] }
             },
             {
                 "name": "session_create",

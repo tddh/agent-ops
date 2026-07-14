@@ -63,7 +63,7 @@ graph LR
     C <-->|Unix Socket| D[RMUX daemon<br/>rmux-based]
 ```
 
-- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 61 terminal control tools + audit CLI
+- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 62 terminal control tools + audit CLI
 - **agent-ops-cli** — CLI tool for humans to directly attach to remote rmux sessions via PTY passthrough (`agent-ops connect`), supporting vim/htop/TUI
 - **rmux-bridge** — QUIC-encrypted proxy deployed on each target Linux host, translating JSON requests to RMUX daemon calls
 - **RMUX daemon** — Terminal multiplexer on each Linux host (rmux-based)
@@ -132,6 +132,8 @@ hosts:
     labels:
       dc: shanghai
 ```
+
+> 💡 **Hot-reload**: After editing `hosts.yaml`, reload without restarting — either call the `reload_config` MCP tool or send `kill -HUP <pid>` to the MCP server process.
 
 ### MCP Server Config
 
@@ -261,7 +263,7 @@ This design keeps agent-ops focused on operations while enabling teams to build 
 
 ## Tools
 
-61 MCP tools covering the full terminal lifecycle:
+62 MCP tools covering the full terminal lifecycle:
 
 | Category | Tools |
 |----------|-------|
@@ -304,7 +306,7 @@ just build       # cargo build --workspace
 
 ## Docs
 
-- [Tool Reference](docs/TOOLS.md) — 61 MCP tools with parameters and return values
+- [Tool Reference](docs/TOOLS.md) — 62 MCP tools with parameters and return values
 - [Deployment Guide](docs/DEPLOY.md) — Architecture, build, deploy, operations, security
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)

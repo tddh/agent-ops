@@ -39,6 +39,22 @@
 
 ---
 
+### `reload_config`
+
+重新加载 `hosts.yaml` 配置，无需重启 MCP Server。修改配置文件（增删改主机）后调用此工具即可生效。加载失败时保留原有配置不变。
+
+| 参数 | 类型 | 必填 |
+|------|------|:---:|
+| 无 | | |
+
+**返回** `{"ok": true, "hosts_count": 3, "message": "successfully reloaded 3 hosts"}`
+
+失败时返回 `{"ok": false, "error": "failed to parse hosts YAML: ..."}` — 此时运行中服务不受影响。
+
+> **两种触发方式**：除了通过此 MCP 工具触发，运维人员也可以通过 `kill -HUP <pid>` 向 MCP Server 进程发送 SIGHUP 信号来触发配置重载。
+
+---
+
 ## 会话管理
 
 ### `session_create`
@@ -871,6 +887,8 @@ agent-ops-mcp audit cleanup [--db <path>] [--older-than <days>] [--max-size <mb>
 
 | 场景 | 工具 |
 |------|------|
+| 看主机列表 | `host_list` / `host_filter` |
+| 重载主机配置 | `reload_config` |
 | 跑命令看结果 | `exec` |
 | 收集大输出 | `collect_until_exit`（比 exec 更高效） |
 | 交互式程序 | `send_keys` + `capture_pane` |

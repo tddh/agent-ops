@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- **配置热加载**：支持在不重启 MCP Server 的情况下重新加载 `hosts.yaml` 配置
+  - 新增 `reload_config` MCP 工具，AI Agent 可主动触发
+  - 支持 SIGHUP 信号触发（`kill -HUP <pid>`），运维友好
+  - 加载失败时保留原有配置，不影响运行中服务
+
 ### Security
 - **文件路径穿越防护**：Bridge 端 `file_upload`/`file_download` 拒绝包含 `..` 的路径，防止路径穿越攻击
 - **下载目录遍历防护**：MCP 端验证远端返回的相对路径不含 `..` 且非绝对路径

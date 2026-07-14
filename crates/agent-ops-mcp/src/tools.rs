@@ -86,6 +86,7 @@ pub async fn execute_tool(ctx: &ToolContext, tool_name: &str, args: Value) -> Re
         "wait_for_bytes" => wait_for_bytes(ctx, args).await,
         "wait_stable" => wait_stable(ctx, args).await,
         "deploy_bridge" => deploy_bridge(ctx, args).await,
+        "reload_config" => reload_config(ctx).await,
         _ => anyhow::bail!("unknown tool: {}", tool_name),
     }
 }
@@ -122,7 +123,7 @@ async fn host_list(ctx: &ToolContext) -> Result<Value> {
 }
 
 async fn host_filter(ctx: &ToolContext, args: Value) -> Result<Value> {
-    let mut hosts: Vec<&agent_ops_core::types::HostConfig> = ctx.router.list();
+    let mut hosts: Vec<agent_ops_core::types::HostConfig> = ctx.router.list();
 
     if let Some(group) = args["group"].as_str() {
         hosts.retain(|h| h.group == group);
@@ -166,6 +167,51 @@ async fn host_filter(ctx: &ToolContext, args: Value) -> Result<Value> {
     )
     .await;
     Ok(json!({ "hosts": result, "count": result.len() }))
+}
+
+async fn reload_config(ctx: &ToolContext) -> Result<Value> {
+    match ctx.router.reload() {
+        Ok(count) => {
+            audit(
+                ctx,
+                AuditAction::HostList,
+                "",
+                "",
+                None,
+                &format!("reloaded {} hosts", count),
+                None,
+                true,
+                0,
+                None,
+            )
+            .await;
+            Ok(json!({
+                "ok": true,
+                "hosts_count": count,
+                "message": format!("successfully reloaded {} hosts", count),
+            }))
+        }
+        Err(e) => {
+            let err_msg = e.to_string();
+            audit(
+                ctx,
+                AuditAction::HostList,
+                "",
+                "",
+                None,
+                "",
+                None,
+                false,
+                0,
+                Some(&err_msg),
+            )
+            .await;
+            Ok(json!({
+                "ok": false,
+                "error": err_msg,
+            }))
+        }
+    }
 }
 
 async fn session_create(ctx: &ToolContext, args: Value) -> Result<Value> {
@@ -751,7 +797,7 @@ async fn stream_pane(ctx: &ToolContext, args: Value) -> Result<Value> {
     let start = std::time::Instant::now();
     let response = ctx
         .stream_manager
-        .stream_pane(host, session_name, pane_id, timeout_ms, &ctx.ca_cert_path)
+        .stream_pane(&host, session_name, pane_id, timeout_ms, &ctx.ca_cert_path)
         .await?;
     let elapsed = start.elapsed().as_millis() as u64;
 
@@ -805,7 +851,7 @@ async fn file_upload(ctx: &ToolContext, args: Value) -> Result<Value> {
         .unwrap_or_default();
 
     let result = crate::files::upload_file(
-        host,
+        &host,
         local_path,
         remote_path,
         &ctx.ca_cert_path,
@@ -854,7 +900,7 @@ async fn file_download(ctx: &ToolContext, args: Value) -> Result<Value> {
         .with_context(|| format!("host not found: {}", host_name))?;
 
     let result =
-        crate::files::download_file(host, remote_path, local_path, &ctx.ca_cert_path).await;
+        crate::files::download_file(&host, remote_path, local_path, &ctx.ca_cert_path).await;
     audit(
         ctx,
         AuditAction::FileDownload,
@@ -1288,7 +1334,7 @@ fn resolve_hosts(
         .iter()
         .map(|name| {
             let h = ctx.router.get(name);
-            (name.clone(), h.cloned())
+            (name.clone(), h)
         })
         .collect()
 }
@@ -2295,7 +2341,7 @@ async fn tunnel_create(ctx: &ToolContext, args: Value) -> Result<Value> {
     let result = ctx
         .tunnel_manager
         .create(
-            host,
+            &host,
             local_addr,
             local_port,
             remote_host.clone(),

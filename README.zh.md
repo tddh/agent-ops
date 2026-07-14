@@ -63,7 +63,7 @@ graph LR
     C <-->|Unix Socket| D[RMUX daemon<br/>基于 rmux]
 ```
 
-- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 61 个终端控制工具 + 操作审计 CLI
+- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 62 个终端控制工具 + 操作审计 CLI
 - **agent-ops-cli** — 命令行工具，人可以直接 PTY 透传 attach 到远程 rmux 会话（`agent-ops connect`），支持 vim/htop/TUI
 - **rmux-bridge** — 部署在每台目标 Linux 主机上的 QUIC 加密代理，将 JSON 请求翻译为 RMUX daemon 调用
 - **RMUX daemon** — 每台 Linux 主机上的终端多路复用器（基于 rmux）
@@ -132,6 +132,8 @@ hosts:
     labels:
       dc: shanghai
 ```
+
+> 💡 **热加载**：修改 `hosts.yaml` 后无需重启 — 调用 `reload_config` MCP 工具或向 MCP Server 进程发送 `kill -HUP <pid>` 即可生效。
 
 ### 配置 MCP Server
 
@@ -260,7 +262,7 @@ echo "$(cat)" >> knowledge.jsonl && git commit -am "新增排障经验条目"
 
 ## 工具列表
 
-共 61 个 MCP 工具，覆盖完整终端生命周期：
+共 62 个 MCP 工具，覆盖完整终端生命周期：
 
 | 类别 | 工具 |
 |------|------|
@@ -303,7 +305,7 @@ just build       # cargo build --workspace
 
 ## 文档
 
-- [工具文档](docs/TOOLS.md) — 61 个 MCP 工具的完整参数与返回值
+- [工具文档](docs/TOOLS.md) — 62 个 MCP 工具的完整参数与返回值
 - [部署文档](docs/DEPLOY.md) — 架构、构建、部署、运维、安全
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)
