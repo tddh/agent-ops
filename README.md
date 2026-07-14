@@ -187,6 +187,78 @@ agent-ops-mcp audit cleanup --older-than 30
 
 Audit data stored at `~/.agent-ops/audit.db`, retained 90 days, max 500 MB.
 
+## Knowledge Base (Design Concept)
+
+agent-ops produces detailed audit trails for every operation, but raw audit logs answer "what happened" — not "why it happened" or "how to fix it next time." This section outlines a design philosophy for turning operational experience into a shared knowledge base. The implementation is deliberately left to users, because **knowledge base backends are a matter of team infrastructure preference, not tooling prescription**.
+
+### The Problem
+
+After an AI-driven troubleshooting session:
+
+- **Knowledge stays local**: the diagnosis, root cause, and fix live only in the chat transcript.
+- **No sharing**: other team members can't search for similar past incidents.
+- **Manual overhead**: writing up a postmortem or wiki entry requires remembering context days later.
+
+### Three-Layer Design
+
+```
+┌─────────────┐    session activity    ┌──────────────────┐
+│  agent-ops  │ ─── audit events ────→ │  Knowledge        │
+│  (MCP)      │    (SQLite)            │  Extraction       │
+└─────────────┘                        │  (AI review)      │
+                                       └────────┬─────────┘
+                                                │ structured entry
+                                                ▼
+                                       ┌──────────────────┐
+                                       │  Output Adapter   │
+                                       │  (user-defined)   │
+                                       └───┬──┬──┬──┬────┘
+                                           │  │  │  │
+                                      ONES │ wiki GitBook ...
+                                           │
+                                     curl / git / webhook
+```
+
+#### 1. Collection (built-in)
+The existing **audit system** records every MCP tool invocation — `exec`, `capture_pane`, `session_create`, etc. — with timestamps, host, success/failure, and error messages. No changes needed.
+
+#### 2. Extraction (AI-driven)
+When the user explicitly triggers "save this session as knowledge," the AI reviews the full conversation history plus the audit trail for that session. It extracts:
+
+| Field | Source |
+|-------|--------|
+| Problem | User's initial report, error outputs |
+| Diagnosis path | Sequence of `exec` / `capture_pane` calls |
+| Root cause | Final finding before the fix |
+| Solution | The command or configuration change that resolved it |
+| Affected hosts / tags | From audit event metadata |
+
+The output is a **structured JSON entry**, not a Markdown file — so the output adapter can transform it to any format.
+
+#### 3. Output (user-defined)
+We intentionally do NOT build platform-specific integrations. Instead, users define a **sink** — a script, command, or webhook that receives the knowledge entry via `stdin` (JSON). Examples:
+
+```bash
+# ~/.agent-ops/sink.sh — push to ONES wiki
+curl -X POST "https://ones.example.com/wiki/api" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "$(cat)"
+```
+
+```bash
+# Push to a git-based knowledge repo
+echo "$(cat)" >> knowledge.jsonl && git commit -am "add troubleshooting entry"
+```
+
+### Design Principles
+
+- **User decides when**: knowledge extraction is explicitly triggered, not automatic — avoids noise entries from incomplete sessions.
+- **User decides where**: no platform lock-in. The sink is whatever CLI/API your team already uses.
+- **User reviews before publishing**: AI-generated entries should be reviewed and edited before being pushed to shared storage.
+- **JSON as interchange**: structured data can be transformed to Markdown, API payloads, database rows, etc.
+
+This design keeps agent-ops focused on operations while enabling teams to build their own knowledge pipelines on top of the audit data it already generates.
+
 ## Tools
 
 61 MCP tools covering the full terminal lifecycle:
