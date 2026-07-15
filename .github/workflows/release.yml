@@ -68,14 +68,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p agent-ops-mcp -p agent-ops-cli
       - name: Package
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p pkg/config pkg/.opencode/skills/agent-ops-mcp
-          cp target/release/agent-ops-mcp.exe target/release/agent-ops-cli.exe pkg/
-          cp config/hosts.example.yaml config/mcp-config.example.json pkg/config/
-          cp .opencode/skills/agent-ops-mcp/SKILL.md pkg/.opencode/skills/agent-ops-mcp/
-          cp README.md pkg/
-          cd pkg && zip -r ../agent-ops-windows-x86_64.zip .
+          New-Item -ItemType Directory -Force -Path pkg/config, pkg/.opencode/skills/agent-ops-mcp
+          Copy-Item target/release/agent-ops-mcp.exe, target/release/agent-ops-cli.exe pkg/
+          Copy-Item config/hosts.example.yaml, config/mcp-config.example.json pkg/config/
+          Copy-Item .opencode/skills/agent-ops-mcp/SKILL.md pkg/.opencode/skills/agent-ops-mcp/
+          Copy-Item README.md pkg/
+          Compress-Archive -Path pkg/* -DestinationPath agent-ops-windows-x86_64.zip
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x86_64
