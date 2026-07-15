@@ -41,7 +41,7 @@ AI Agent (via MCP)
 
 # Pattern 2: Human investigates via CLI while AI assists
 Human (via CLI PTY passthrough)
-  → agent-ops connect tf01  # same session AI was working in
+  → agent-ops-cli connect tf01  # same session AI was working in
   → vim /etc/nginx/nginx.conf  # human edits in familiar tools
   AI Agent (via MCP)
   → exec: nginx -t && systemctl reload nginx  # AI validates & applies
@@ -72,7 +72,7 @@ graph LR
 ```
 
 - **agent-ops-mcp** — MCP Server running alongside the AI client, providing 62 terminal control tools + audit CLI
-- **agent-ops-cli** — CLI tool for humans to directly attach to remote rmux sessions via PTY passthrough (`agent-ops connect`), supporting vim/htop/TUI
+- **agent-ops-cli** — CLI tool for humans to directly attach to remote rmux sessions via PTY passthrough (`agent-ops-cli connect`), supporting vim/htop/TUI
 - **rmux-bridge** — QUIC-encrypted proxy deployed on each target Linux host, translating JSON requests to RMUX daemon calls
 - **RMUX daemon** — Terminal multiplexer on each Linux host (rmux-based)
 
@@ -91,7 +91,7 @@ graph LR
 
 | Feature | Description |
 |---------|-------------|
-| **Interactive terminal** | `agent-ops connect` CLI command — PTY-passthrough to remote rmux sessions, supports vim/htop/TUI |
+| **Interactive terminal** | `agent-ops-cli connect` CLI command — PTY-passthrough to remote rmux sessions, supports vim/htop/TUI |
 | **Session management** | Create/destroy/list sessions, multi-pane splits, window layouts |
 | **Command execution** | `exec` one-shot execution (sentinel detection + exit code), interactive programs via send_keys + capture_pane |
 | **Output waiting** | `wait_for_text` for terminal text, `wait_exit` for process exit |

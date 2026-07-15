@@ -4,14 +4,8 @@
             "type": "local",
             "command": ["/path/to/agent-ops-mcp"],
             "args": [
-                "--hosts-file",
-                "/path/to/hosts.yaml",
-                "--ca-cert",
-                "/path/to/ca.crt",
-                "--audit-db", "/path/to/audit.db",
-                "--audit-retention-days", "90",
-                "--audit-max-size-mb", "500",
-                "--audit-cleanup-interval-secs", "600"
+                "--ca-cert", "/path/to/ca.crt",
+                "--hosts-file", "/path/to/hosts.yaml"
             ],
             "enabled": true
         }

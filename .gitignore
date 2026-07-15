@@ -50,3 +50,7 @@ docs/superpowers/plans/
 deploy/libexec/
 deploy/rmux
 deploy/rmux-daemon
+
+# 发布打包产物
+dist/
+release-pkg/

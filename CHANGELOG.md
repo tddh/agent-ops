@@ -21,7 +21,7 @@
 - **隧道目标白名单（SSRF 防护）**：`hosts.yaml` 新增可选 `allowed_tunnel_targets` 字段，支持 glob 模式限制端口转发目标（如 `"127.0.0.1:5432"`、`"10.0.1.*:*"`），不配置则全部允许（向后兼容）
 
 ### Added
-- **交互式终端直连**：新增 `agent-ops-cli` crate，提供 `agent-ops connect` CLI 命令
+- **交互式终端直连**：新增 `agent-ops-cli` crate，提供 `agent-ops-cli connect` CLI 命令
   - PTY + `rmux attach-session` 子进程透传方案，完美支持 vim/htop 等 TUI 程序
   - QUIC 双流协议（0x06 控制 + 0x07 数据），控制面与数据面分离
   - crossterm raw mode 终端转发，支持 resize/detach

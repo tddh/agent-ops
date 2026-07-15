@@ -1,4 +1,4 @@
-# `agent-ops connect` 交互式终端连接设计方案
+# `agent-ops-cli connect` 交互式终端连接设计方案
 
 > **版本**: v1.0 | **日期**: 2026-07-07 | **状态**: 设计中
 >
@@ -29,11 +29,11 @@ AI Agent ──MCP exec──► agent-ops-mcp ──QUIC──► bridge ──
 
 ### 1.2 目标
 
-新增 `agent-ops connect` 命令，让用户从命令行 **交互式连接** 到远程 rmux 会话：
+新增 `agent-ops-cli connect` 命令，让用户从命令行 **交互式连接** 到远程 rmux 会话：
 
 ```bash
 # 连接到远程主机的 rmux 会话
-$ agent-ops connect prod-web-01 --session agent-ops --pane %0
+$ agent-ops-cli connect prod-web-01 --session agent-ops --pane %0
 
 # 效果等同于 SSH + tmux attach，但通过 QUIC 加密通道
 # 支持：实时输入输出、vim/top/htop、Ctrl+C、Tab 补全、窗口 resize
@@ -75,7 +75,7 @@ $ agent-ops connect prod-web-01 --session agent-ops --pane %0
 
 ### 2.3 与 SSH 的区别
 
-| 维度 | SSH | agent-ops connect |
+| 维度 | SSH | agent-ops-cli connect |
 |------|-----|-------------------|
 | **执行环境** | 新建一个 shell 进程 | 接入已有的 rmux pane |
 | **断开后** | shell 终止，进程丢失 | shell 继续，进程存活 |
@@ -144,7 +144,7 @@ AI Agent 继续通过 MCP exec 操作同一个 pane %0：
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                      agent-ops connect                          │
+│                      agent-ops-cli connect                          │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  ┌──────────────┐    QUIC/TLS     ┌──────────────┐             │
@@ -192,7 +192,7 @@ AI Agent 继续通过 MCP exec 操作同一个 pane %0：
 │                                                         │
 │  AI Agent 使用（MCP 工具）        人类使用（CLI 命令）     │
 │  ┌─────────────────────┐    ┌─────────────────────┐    │
-│  │ • exec              │    │ • agent-ops connect  │    │
+│  │ • exec              │    │ • agent-ops-cli connect  │    │
 │  │ • capture_pane      │    │ • agent-ops upload   │    │
 │  │ • send_keys         │    │ • agent-ops download │    │
 │  │ • file_upload       │    │ • agent-ops tunnel   │    │
@@ -369,7 +369,7 @@ enum ServerControl {
 
 ### 5.6 字节级协议示例
 
-以 `agent-ops connect prod-web-01 --session agent-ops --pane %0` 为例：
+以 `agent-ops-cli connect prod-web-01 --session agent-ops --pane %0` 为例：
 
 ```
 === QUIC 连接建立 ===
@@ -1430,7 +1430,7 @@ hosts:
 | 任务 | 说明 | 验收标准 |
 |------|------|---------|
 | Bridge 端 `handle_interactive_control/data` | 新增 0x06/0x07 流处理 | 能接受连接并转发数据 |
-| CLI crate 骨架 | `agent-ops connect` 命令 | `just build` 通过 |
+| CLI crate 骨架 | `agent-ops-cli connect` 命令 | `just build` 通过 |
 | 基础 PTY 转发 | stdin → send_key, output_stream → stdout | 能执行简单命令并看到输出 |
 | Raw mode 终端 | crossterm enable_raw_mode | 终端输入输出正常 |
 
@@ -1449,7 +1449,7 @@ hosts:
 | 任务 | 说明 | 验收标准 |
 |------|------|---------|
 | 断线重连 | QUIC 连接迁移 + rmux session reattach | 网络切换后自动恢复 |
-| 只读模式 | `agent-ops connect --readonly` | 只能看不能输入 |
+| 只读模式 | `agent-ops-cli connect --readonly` | 只能看不能输入 |
 | 审计集成 | connect 操作写入 SQLite 审计日志 | `audit query --action interactive_connect` |
 | 多人共享 | 多个客户端 attach 同一个 pane | 所有人看到相同输出 |
 
@@ -1472,17 +1472,17 @@ hosts:
 
 ```bash
 # 基础连接
-$ agent-ops connect prod-web-01
+$ agent-ops-cli connect prod-web-01
 Connected to prod-web-01:agent-ops/%0 (120x40)
 Last login: 2026-07-07 10:00:00
 $ ls -la
 ...
 
 # 指定 session 和 pane
-$ agent-ops connect prod-web-01 --session debug --pane %1
+$ agent-ops-cli connect prod-web-01 --session debug --pane %1
 
 # 只读模式（观察 AI Agent 操作）
-$ agent-ops connect prod-web-01 --readonly
+$ agent-ops-cli connect prod-web-01 --readonly
 
 # 列出可连接的会话（注意：list 是独立子命令，非 connect --list）
 $ agent-ops list prod-web-01

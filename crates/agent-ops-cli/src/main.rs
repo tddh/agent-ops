@@ -5,7 +5,7 @@ mod terminal;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "agent-ops", about = "AI Agent 远程运维 CLI")]
+#[command(name = "agent-ops-cli", about = "AI Agent 远程运维 CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

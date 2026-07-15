@@ -13,7 +13,7 @@
 ```
 
 - **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 62 个终端控制工具 + 操作审计 CLI
-- **agent-ops-cli**: 命令行工具，人可以直接 PTY 透传 attach 到远程 rmux 会话（`agent-ops connect`）
+- **agent-ops-cli**: 命令行工具，人可以直接 PTY 透传 attach 到远程 rmux 会话（`agent-ops-cli connect`）
 - **rmux-bridge**: 部署在每台目标 Linux 主机上，QUIC 加密代理 → RMUX daemon。终端操作与文件传输统一走 QUIC 协议（UDP :9778）
 - **RMUX daemon**: 每个 Linux 主机上的终端多路复用器
 
