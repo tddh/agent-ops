@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-macos:
+    name: macOS (arm64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p agent-ops-mcp -p agent-ops-cli
+      - name: Package
+        run: |
+          mkdir -p pkg/config pkg/.opencode/skills/agent-ops-mcp
+          cp target/release/agent-ops-mcp target/release/agent-ops-cli pkg/
+          cp config/hosts.example.yaml config/mcp-config.example.json pkg/config/
+          cp .opencode/skills/agent-ops-mcp/SKILL.md pkg/.opencode/skills/agent-ops-mcp/
+          cp README.md pkg/
+          tar czf agent-ops-macos-arm64.tar.gz -C pkg .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: agent-ops-macos-arm64.tar.gz
+
+  build-linux:
+    name: Linux (x86_64 musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --target x86_64-unknown-linux-musl --release -p agent-ops-mcp -p agent-ops-cli -p rmux-bridge
+      - name: Package
+        run: |
+          mkdir -p pkg/config pkg/deploy pkg/.opencode/skills/agent-ops-mcp
+          cp target/x86_64-unknown-linux-musl/release/agent-ops-mcp pkg/
+          cp target/x86_64-unknown-linux-musl/release/agent-ops-cli pkg/
+          cp target/x86_64-unknown-linux-musl/release/rmux-bridge pkg/
+          cp config/hosts.example.yaml config/mcp-config.example.json pkg/config/
+          cp deploy/install-bridge.sh deploy/install-daemon.sh pkg/deploy/
+          cp deploy/rmux-bridge.service deploy/rmux-daemon.service pkg/deploy/
+          cp deploy/generate-certs.sh pkg/deploy/
+          cp .opencode/skills/agent-ops-mcp/SKILL.md pkg/.opencode/skills/agent-ops-mcp/
+          cp README.md pkg/
+          tar czf agent-ops-linux-x86_64.tar.gz -C pkg .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: agent-ops-linux-x86_64.tar.gz
+
+  build-windows:
+    name: Windows (x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p agent-ops-mcp -p agent-ops-cli
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p pkg/config pkg/.opencode/skills/agent-ops-mcp
+          cp target/release/agent-ops-mcp.exe target/release/agent-ops-cli.exe pkg/
+          cp config/hosts.example.yaml config/mcp-config.example.json pkg/config/
+          cp .opencode/skills/agent-ops-mcp/SKILL.md pkg/.opencode/skills/agent-ops-mcp/
+          cp README.md pkg/
+          cd pkg && zip -r ../agent-ops-windows-x86_64.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: agent-ops-windows-x86_64.zip
+
+  release:
+    name: Create Release
+    needs: [build-macos, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*'
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            agent-ops-macos-arm64.tar.gz
+            agent-ops-linux-x86_64.tar.gz
+            agent-ops-windows-x86_64.zip
+          generate_release_notes: true

@@ -209,13 +209,14 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_by_time() {
         let db = AuditDb::open_in_memory().unwrap();
-        let conn = db.conn_ref().lock().unwrap_or_else(|e| e.into_inner());
-        conn.execute(
-            "INSERT INTO audit_events (event_id, timestamp, agent_name, host_name, action, detail, success)
-             VALUES ('old-1', '2020-01-01T00:00:00Z', 'test', 'tf01', 'Exec', 'test', 1)",
-            [],
-        ).unwrap();
-        drop(conn);
+        {
+            let conn = db.conn_ref().lock().unwrap_or_else(|e| e.into_inner());
+            conn.execute(
+                "INSERT INTO audit_events (event_id, timestamp, agent_name, host_name, action, detail, success)
+                 VALUES ('old-1', '2020-01-01T00:00:00Z', 'test', 'tf01', 'Exec', 'test', 1)",
+                [],
+            ).unwrap();
+        }
 
         db.cleanup(90, 500).await.unwrap();
 

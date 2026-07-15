@@ -72,5 +72,5 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --workspace --release -p agent-ops-mcp -p agent-ops-core
-      - run: cargo test --workspace -p agent-ops-mcp -p agent-ops-core --verbose
+      - run: cargo build --workspace --release -p agent-ops-mcp -p agent-ops-cli -p agent-ops-core
+      - run: cargo test --workspace -p agent-ops-mcp -p agent-ops-cli -p agent-ops-core --verbose
