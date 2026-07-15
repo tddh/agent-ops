@@ -84,27 +84,30 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let sig_router = Arc::clone(&router);
-    tokio::spawn(async move {
-        let mut sig = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!("SIGHUP handler not available (non-unix?): {e}");
-                return;
-            }
-        };
-        loop {
-            sig.recv().await;
-            match sig_router.reload() {
-                Ok(count) => {
-                    tracing::info!("SIGHUP: successfully reloaded {} hosts from config", count);
-                }
+    #[cfg(unix)]
+    {
+        let sig_router = Arc::clone(&router);
+        tokio::spawn(async move {
+            let mut sig = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) {
+                Ok(s) => s,
                 Err(e) => {
-                    tracing::error!("SIGHUP: config reload failed: {e}");
+                    tracing::warn!("SIGHUP handler not available: {e}");
+                    return;
+                }
+            };
+            loop {
+                sig.recv().await;
+                match sig_router.reload() {
+                    Ok(count) => {
+                        tracing::info!("SIGHUP: successfully reloaded {} hosts from config", count);
+                    }
+                    Err(e) => {
+                        tracing::error!("SIGHUP: config reload failed: {e}");
+                    }
                 }
             }
-        }
-    });
+        });
+    }
 
     let ctx = Arc::new(tools::ToolContext {
         router,
