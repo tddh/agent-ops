@@ -23,6 +23,7 @@ just fmt-check    # Check formatting
 crates/
 ├── agent-ops-core/    # Shared types (HostConfig, AuditEvent, SessionInfo)
 ├── agent-ops-mcp/     # MCP Server — runs alongside AI client
+├── agent-ops-cli/     # CLI tool — human PTY passthrough to remote sessions
 └── rmux-bridge/       # Bridge daemon — deployed on target Linux hosts
 ```
 
