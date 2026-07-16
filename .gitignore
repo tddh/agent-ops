@@ -40,6 +40,9 @@ docs/competitive-analysis.md
 # AI 辅助开发计划
 .sisyphus/
 
+# Git worktrees
+.worktrees/
+
 # 临时文件
 *.tmp
 *.bak
