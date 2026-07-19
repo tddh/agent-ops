@@ -247,7 +247,7 @@ pub fn tools_definition() -> Value {
             },
             {
                 "name": "exec",
-                "description": "One-shot command execution: send command → wait for exit → capture output → clean text (default 200 lines, 30s timeout). Automatically clears any unexecuted input before running. Returns output, exit_code, duration_ms, plus terminal_state (ready/running/password/confirm/repl/editor/pager/unknown) and cursor position. Shell combiners (&&, ;, |) are allowed — PREFER combining multiple read-only diagnostic commands into a single exec to reduce round-trips (e.g., 'df -h && free -m && uptime'). Exec auto-detects terminal state before running and refuses if not ready. CAUTION: some commands may trigger pager/editor (e.g., git log, journalctl). If that happens mid-chain, subsequent commands won't execute. Use --no-pager or append '| cat' for commands that might page. For self-terminating commands (ls, cat, grep, systemctl, kubectl, curl). NOT for interactive programs (vim, htop) or non-terminating commands (tail -f, ping). Use send_keys + capture_pane for those. For long-running commands (ansible-playbook, builds, terraform): increase timeout_ms — the command keeps running even on timeout (unlike collect_until_exit), and you can capture_pane later to recover output.",
+                "description": "One-shot command execution: send command → wait for exit → capture full output from scrollback (start_marker → sentinel range, complete terminal context including prompt and command echo; max_lines truncates to the LAST N lines of output, default 200, 0=unlimited — large outputs of hundreds/thousands of lines are fully captured up to the daemon history limit), 10min timeout. Automatically clears any unexecuted input before running. Returns output, exit_code, duration_ms, plus terminal_state (ready/running/password/confirm/repl/editor/pager/unknown) and cursor position. Shell combiners (&&, ;, |) are allowed — PREFER combining multiple read-only diagnostic commands into a single exec to reduce round-trips (e.g., 'df -h && free -m && uptime'). Exec auto-detects terminal state before running and refuses if not ready. CAUTION: some commands may trigger pager/editor (e.g., git log, journalctl). If that happens mid-chain, subsequent commands won't execute. Use --no-pager or append '| cat' for commands that might page. For self-terminating commands (ls, cat, grep, systemctl, kubectl, curl). NOT for interactive programs (vim, htop) or non-terminating commands (tail -f, ping). Use send_keys + capture_pane for those. The 10min default timeout is just a safety net — normal commands (including builds, apt/yum installs, docker pulls) do NOT need timeout_ms set. The wait is resilient: if the connection drops mid-wait (bridge restart, network flap, QUIC idle), exec transparently reconnects with backoff and resumes waiting within the same timeout budget — the sentinel marker lives on the remote pane, so command execution is never affected by reconnects. On timeout the command keeps running (unlike collect_until_exit) and output can be recovered later with capture_pane. For very long tasks (ansible-playbook, terraform, large builds) prefer spawn_command + collect_until_exit or stream_pane instead.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -255,8 +255,8 @@ pub fn tools_definition() -> Value {
                         "session_name": { "type": "string", "description": "Session name, default: agent-ops" },
                         "pane_id": { "type": "string", "description": "Pane ID, e.g. %0" },
                         "command": { "type": "string", "description": "Shell command, e.g. ls -la" },
-                        "timeout_ms": { "type": "number", "description": "Default 30000" },
-                        "max_lines": { "type": "integer", "description": "Default 200, 0=unlimited" },
+                        "timeout_ms": { "type": "number", "description": "Safety-net timeout in ms (default: 600000 = 10min). Normal commands don't need to set this — waiting for command completion is the default behavior." },
+                        "max_lines": { "type": "integer", "description": "Keep only the LAST N lines of output (default: 200, 0 = unlimited). Full output is always captured from scrollback regardless of this setting." },
                         "clear_screen": { "type": "boolean", "description": "Clear pane before running" }
                     },
                     "required": ["host", "session_name", "pane_id", "command"]
@@ -507,13 +507,13 @@ pub fn tools_definition() -> Value {
             },
             {
                 "name": "batch_exec",
-                "description": "Multi-host command execution: sends the same command to all specified hosts concurrently, waits for each to complete (sentinel polling), captures output per host, and returns results keyed by hostname. Default 5 concurrent connections, 200 lines/host, 2min timeout/host. Host-level failures (connection refused, timeout) are marked ok=false but do NOT affect other hosts. Non-zero exit codes set per-host ok=false (but output is always captured — check per-host exit_code). For self-terminating commands only (ls, cat, grep, df, systemctl, kubectl, curl). NOT for interactive programs (vim, htop) or non-terminating commands (tail -f, ping). Uses the agent-ops session default pane (%0) on each host. Use this when you need to run the same command on multiple machines in one round — saves N-1 round trips compared to calling exec per host.",
+                "description": "Multi-host command execution: sends the same command to all specified hosts concurrently, waits for each to complete via sentinel markers (event-driven detection), captures output per host, and returns results keyed by hostname. Default 5 concurrent connections, 200 lines/host, 10min timeout/host. Host-level failures (connection refused, timeout) are marked ok=false but do NOT affect other hosts. Non-zero exit codes set per-host ok=false (but output is always captured — check per-host exit_code). For self-terminating commands only (ls, cat, grep, df, systemctl, kubectl, curl). NOT for interactive programs (vim, htop) or non-terminating commands (tail -f, ping). Uses the agent-ops session default pane (%0) on each host. Use this when you need to run the same command on multiple machines in one round — saves N-1 round trips compared to calling exec per host.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "hosts": { "type": "array", "items": { "type": "string" }, "description": "Hostname list, e.g. [\"tf01\", \"dns-backup\"]" },
                         "command": { "type": "string", "description": "Command to run on each host" },
-                        "timeout_ms": { "type": "number", "description": "Per-host timeout in ms (default: 120000)" },
+                        "timeout_ms": { "type": "number", "description": "Per-host timeout in ms (default: 600000 = 10min)" },
                         "max_lines": { "type": "integer", "description": "Max output lines per host (default: 200, 0=unlimited)" },
                         "concurrency": { "type": "integer", "description": "Max concurrent connections (default: 5, 0=unlimited)" }
                     },
@@ -728,7 +728,7 @@ pub fn tools_definition() -> Value {
             },
             {
                 "name": "collect_until_exit",
-                "description": "Collect all pane output from now until the process exits. The pane process MUST already be running — use spawn_command or shell_command to start it first. More efficient than sentinel polling for commands with large output, as it streams directly without repeated capture_pane calls. Returns collected bytes and exit info. Default max is 1MB, default timeout is 60s. Use starting_at='oldest' to include scrollback history. ⚠️ On timeout, the remote task is ABORTED (process killed). Unlike exec where the command keeps running after timeout. For fire-and-forget long tasks, use shell_command + wait_for_text instead.",
+                "description": "Collect all pane output from now until the process exits. The pane process MUST already be running — use spawn_command or shell_command to start it first. More efficient than sentinel markers for large-output commands, as it streams directly without repeated capture_pane calls. Returns collected bytes and exit info. Default max is 1MB, default timeout is 60s. Use starting_at='oldest' to include scrollback history. ⚠️ On timeout, the remote task is ABORTED (process killed). Unlike exec where the command keeps running after timeout. For fire-and-forget long tasks, use shell_command + wait_for_text instead.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {

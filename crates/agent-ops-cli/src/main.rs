@@ -1,6 +1,8 @@
+mod ai;
 mod connect;
 mod protocol;
 mod terminal;
+mod tui;
 
 use clap::{Parser, Subcommand};
 
@@ -10,10 +12,10 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    #[arg(long, default_value = "config/hosts.yaml")]
+    #[arg(long, default_value = "~/.agent-ops/hosts.yaml")]
     hosts_file: String,
 
-    #[arg(long, default_value = "config/ca.crt")]
+    #[arg(long, default_value = "~/.agent-ops/ca.crt")]
     ca_cert: String,
 }
 
@@ -53,7 +55,10 @@ fn load_host_config(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_writer(std::io::stderr)
+        .init();
     let cli = Cli::parse();
 
     match cli.command {
@@ -68,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
                 Some(p) => p,
                 None => connect::find_lowest_pane(&config, &cli.ca_cert, &session).await?,
             };
-            connect::connect(&config, &cli.ca_cert, &session, &pane, readonly).await
+            crate::tui::run_connect_with_ai(&config, &cli.ca_cert, &session, &pane, readonly).await
         }
         Commands::List { host } => {
             let config = load_host_config(&cli.hosts_file, &host)?;

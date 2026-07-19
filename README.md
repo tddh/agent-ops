@@ -71,8 +71,8 @@ graph LR
     C <-->|Unix Socket| D[RMUX daemon<br/>rmux-based]
 ```
 
-- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 62 terminal control tools + audit CLI
-- **agent-ops-cli** — CLI tool for humans to directly attach to remote rmux sessions via PTY passthrough (`agent-ops-cli connect`), supporting vim/htop/TUI
+- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 63 terminal control tools + audit CLI
+- **agent-ops-cli** — CLI tool for humans: PTY-passthrough to remote rmux sessions (`connect`), plus built-in AI chat panel (Ctrl+G) with SSE streaming for real-time thinking/output. Supports vim/htop/TUI
 - **rmux-bridge** — QUIC-encrypted proxy deployed on each target Linux host, translating JSON requests to RMUX daemon calls
 - **RMUX daemon** — Terminal multiplexer on each Linux host (rmux-based)
 
@@ -80,8 +80,8 @@ graph LR
 
 | Component | Runs on | Depends on |
 |-----------|---------|------------|
-| `agent-ops-mcp` | AI client machine (macOS/Linux/Windows) | Nothing — just the binary |
-| `agent-ops-cli` | Human operator machine (macOS/Linux) | Nothing — just the binary |
+| `agent-ops-mcp` | AI client machine (macOS/Linux/Windows) | Compiled binary (needs `hosts.yaml` + CA cert at runtime) |
+| `agent-ops-cli` | Human operator machine (macOS/Linux) | Compiled binary (needs `hosts.yaml` + CA cert at runtime) |
 | `rmux-bridge` | Each target Linux host | **RMUX daemon** (`curl -fsSL https://rmux.io/install.sh \| sh`) |
 | RMUX daemon | Each target Linux host | rmux (needs installation) |
 
@@ -91,16 +91,34 @@ graph LR
 
 | Feature | Description |
 |---------|-------------|
-| **Interactive terminal** | `agent-ops-cli connect` CLI command — PTY-passthrough to remote rmux sessions, supports vim/htop/TUI |
+| **Interactive terminal** | `agent-ops-cli connect` — PTY-passthrough to remote rmux sessions + built-in AI chat panel (Ctrl+G) with real-time SSE streaming, supports vim/htop/TUI |
 | **Session management** | Create/destroy/list sessions, multi-pane splits, window layouts |
-| **Command execution** | `exec` one-shot execution (sentinel detection + exit code), interactive programs via send_keys + capture_pane |
+| **Command execution** | `exec` one-shot execution (sentinel detection + exit code, full scrollback capture for large outputs, auto-reconnect on connection drop), interactive programs via send_keys + capture_pane |
 | **Output waiting** | `wait_for_text` for terminal text, `wait_exit` for process exit |
 | **File transfer** | Upload/download over QUIC, recursive directory upload and download with concurrency |
 | **Port forwarding** | Local port forwarding tunnels through QUIC to access remote internal services |
 | **Multi-host orchestration** | Host registry with group/tag/label filtering, broadcast_keys for multi-pane |
 | **Audit logging** | SQLite audit logs for every tool call, CLI query/stats/cleanup |
-| **Terminal state awareness** | `capture_pane`, `exec`, `wait_for_text`, `wait_stable`, `pane_info` return `terminal_state` (ready/running/editor/pager/password/...) and cursor position, so AI agents know what the terminal is currently doing |
+| **Terminal state awareness** | `capture_pane`, `exec`, `wait_for_text`, `wait_stable`, `pane_info` return `terminal_state` (ready/running/editor/pager/password/confirm/repl/unknown) and cursor position, so AI agents know what the terminal is currently doing |
 | **Exec safety check** | `exec` refuses execution when terminal is not in `ready` state (e.g., inside vim, less, password prompt), returning `refused: true` with actionable guidance to prevent command injection |
+
+### AI Chat Panel Keybindings
+
+Inside the AI panel (activated via `Ctrl+G`):
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+G` / `Esc` | Close AI panel, return to terminal |
+| `Enter` | Send message |
+| `Backspace` | Delete last character |
+| `↑` / `PageUp` | Scroll message history up (older messages) |
+| `↓` / `PageDown` | Scroll message history down (newer messages) |
+| `Mouse Scroll` | Scroll message history |
+
+| Command | Action |
+|---------|--------|
+| `@analyze` | Analyze current terminal content |
+| `@clear` | Clear conversation history |
 
 ## Quick Start
 
@@ -111,7 +129,7 @@ graph LR
 cargo build -p agent-ops-mcp --release
 cargo build -p agent-ops-cli --release
 
-# Cross-compile bridge for Linux x86_64 (static)
+# Cross-compile bridge + MCP server for Linux x86_64 (static)
 just release-linux
 ```
 
@@ -154,8 +172,8 @@ Edit `~/.config/opencode/opencode.json` (see `config/mcp-config.example.json`):
       "type": "local",
       "command": ["/path/to/agent-ops-mcp"],
       "args": [
-        "--hosts-file", "/path/to/hosts.yaml",
-        "--ca-cert", "/path/to/ca.crt"
+        "--ca-cert", "/path/to/ca.crt",
+        "--hosts-file", "/path/to/hosts.yaml"
       ],
       "enabled": true
     }
@@ -167,10 +185,9 @@ Edit `~/.config/opencode/opencode.json` (see `config/mcp-config.example.json`):
 
 ## Security
 
-| Mode | Trigger | Level |
-|------|---------|:---:|
-| CA verified | `--ca-cert /path/to/ca.crt` | ✅ Server identity verified, MITM-resistant |
-| Reject | No CA provided | 🔒 Default |
+| Mode | Description |
+|------|-------------|
+| CA verified (required) | `--ca-cert` is mandatory. Server identity is always verified via CA root cert. MITM-resistant. MCP server will not start without it. |
 
 **Production**: Run your own CA, issue per-bridge certificates, MCP server holds only the CA root.
 
@@ -271,7 +288,7 @@ This design keeps agent-ops focused on operations while enabling teams to build 
 
 ## Tools
 
-62 MCP tools covering the full terminal lifecycle, plus `audit query/stats/cleanup` CLI subcommands for human operators:
+63 MCP tools covering the full terminal lifecycle, plus `audit query/stats/cleanup` CLI subcommands for human operators:
 
 | Category | Tools |
 |----------|-------|
@@ -288,8 +305,9 @@ This design keeps agent-ops focused on operations while enabling teams to build 
 | Batch | `batch_exec`, `batch_upload`, `batch_download` |
 | Tunnel | `tunnel_create`, `tunnel_list`, `tunnel_close` |
 | Deploy | `deploy_bridge` |
+| System | `agent_ops_usage_rules` |
 
-> 💡 `stream_pane` 适用于长命令实时输出监控（阻塞读，增量返回），替代 capture_pane 轮询。
+> 💡 `stream_pane` is ideal for real-time output monitoring of long-running commands (blocking read, incremental return), replacing capture_pane polling.
 
 Full docs: [docs/TOOLS.md](docs/TOOLS.md)
 
@@ -305,7 +323,7 @@ just build       # cargo build --workspace
 
 ## Tech Stack
 
-- **Language**: Rust 1.85+ (edition 2021)
+- **Language**: Rust stable (edition 2021)
 - **Async runtime**: tokio
 - **TLS**: rustls (no OpenSSL dependency)
 - **Terminal**: rmux-sdk
@@ -314,7 +332,7 @@ just build       # cargo build --workspace
 
 ## Docs
 
-- [Tool Reference](docs/TOOLS.md) — 62 MCP tools with parameters and return values
+- [Tool Reference](docs/TOOLS.md) — 63 MCP tools with parameters and return values
 - [Deployment Guide](docs/DEPLOY.md) — Architecture, build, deploy, operations, security
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)

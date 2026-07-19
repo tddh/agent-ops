@@ -119,7 +119,14 @@ pub(crate) async fn deploy_bridge(ctx: &ToolContext, args: Value) -> Result<Valu
                 "systemctl show rmux-bridge -p ExecStart 2>/dev/null | grep -oP 'path=\\K[^ ;]+' || echo ''",
                 10000, 50).await;
 
-            let systemd_path = exec_result.output.trim().to_string();
+            // exec 输出为完整终端上下文（含提示符与命令回显），按路径特征提取行
+            let systemd_path = exec_result
+                .output
+                .lines()
+                .map(|l| l.trim())
+                .find(|l| l.starts_with('/'))
+                .unwrap_or("")
+                .to_string();
             if systemd_path.is_empty() {
                 return (host_name.clone(), json!({
                     "ok": false, "status": "first_time_deploy",
@@ -195,7 +202,7 @@ pub(crate) async fn deploy_bridge(ctx: &ToolContext, args: Value) -> Result<Valu
 
             let verify_result = exec_in_session(&mut new_stream, session_name, &pane_id,
                 "systemctl is-active rmux-bridge", 10000, 50).await;
-            let is_active = verify_result.output.trim() == "active";
+            let is_active = verify_result.output.lines().any(|l| l.trim() == "active");
 
             (host_name.clone(), json!({
                 "ok": is_active,

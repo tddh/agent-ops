@@ -69,7 +69,7 @@ pub enum TerminalState {
 ### 3.2 检测时机
 
 > ⚠️ **重要**：检测必须在 `clean_text()` **之前**运行，使用 `snapshot.visible_text()` 的原始输出。
-> `clean_text()` 会过滤掉 `root@...#` 和 `root@...$` 等 prompt 行，如果先 clean 再检测就看不到提示符了。
+> `clean_text()` 会去除 ANSI 转义码和空行，检测需要依赖原始完整文本（包括 ANSI 状态码和终端布局信息）。
 > 返回给用户的 `text` 字段仍然是 `clean_text` 处理后的文本，两者不冲突。
 
 ```rust
@@ -604,7 +604,7 @@ mod tests {
 | 自定义 PS1 不匹配 | 非标准提示符（如 zsh `➜`）判为 `unknown` | `unknown` 是安全默认值，不会导致错误行为；后续可通过 `shell_prompt_regex` 扩展 |
 | 性能影响 | capture_pane Path A / wait_stable 零额外 RPC；wait_for_text / pane_info 各 +1 次 IPC（约 1-10ms） | 检测算法本身 < 1μs；额外 IPC 仅在低频操作中发生 |
 | 向后兼容 | 旧客户端收到多余字段 | JSON 新增字段不影响标准解析器；在 CHANGELOG 中记录 |
-| `clean_text` 交互 | 如果检测在 clean_text 之后运行，prompt 行会被过滤掉 | 检测必须在 `clean_text` **之前**运行（已在 §3.2 明确） |
+| `clean_text` 交互 | 如果检测在 clean_text 之后运行，ANSI 码和终端布局信息会丢失 | 检测必须在 `clean_text` **之前**运行（已在 §3.2 明确） |
 
 ---
 

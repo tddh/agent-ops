@@ -35,6 +35,9 @@ pub async fn connect_to_bridge_quic(
     ));
     let mut transport = quinn::TransportConfig::default();
     transport.max_idle_timeout(Some(Duration::from_secs(30).try_into()?));
+    // event-driven 等待（wait_for_text/wait_exit/collect_until_exit 等）期间
+    // 连接静默，需 keep-alive 防止 30s idle timeout 断连
+    transport.keep_alive_interval(Some(Duration::from_secs(10)));
     client_config.transport_config(std::sync::Arc::new(transport));
     endpoint.set_default_client_config(client_config);
 

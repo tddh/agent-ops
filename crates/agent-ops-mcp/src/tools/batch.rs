@@ -24,7 +24,7 @@ pub(crate) async fn batch_exec(ctx: &ToolContext, args: Value) -> Result<Value> 
     }
 
     let command = args["command"].as_str().context("missing 'command'")?;
-    let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(120000);
+    let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(600000);
     let max_lines = args["max_lines"]
         .as_u64()
         .map(|v| v as usize)

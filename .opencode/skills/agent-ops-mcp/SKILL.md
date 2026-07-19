@@ -145,7 +145,7 @@ close_pane(host="tf01", session_name="agent-ops", pane_id="%0")  # ❌ 违反规
 | 分屏并执行命令 | `split_pane_with`（一步完成分屏+启动命令） |
 | 特殊按键 | `send_keys`（`\x03`=Ctrl-C, `\n`=Enter） |
 | 搜索 | `find_pane_text` / `find_text_all` |
-| 大输出命令 | `collect_until_exit`（比 exec 更高效） |
+| 大输出命令 | `collect_until_exit` |
 | 长命令实时监控 | `stream_pane`（阻塞读，增量返回，替代 capture_pane 轮询） |
 | 等终端稳定 | `wait_stable`（发送命令后待渲染完成再 capture） |
 | 等特定字节序列 | `wait_for_bytes`（匹配 ANSI 序列等原始字节） |
@@ -272,7 +272,7 @@ batch_exec(hosts=["tf01", "dns-backup"], command="hostname")
 3. capture_pane → 获取结果
 ```
 
-> ⚠️ **exec 超时不杀进程**：exec 的 timeout 只是客户端的等等，命令仍在远端 rmux pane 中运行。超时后可以用 `capture_pane` 查看进度，`wait_for_text` 等完成标志，或 `send_keys("\x03")` 中断。不要因为超时就重跑。
+> ⚠️ **exec 超时不杀进程**：exec 的 timeout 只是客户端的等待上限，命令仍在远端 rmux pane 中运行。超时后可以用 `capture_pane` 查看进度，`wait_for_text` 等完成标志，或 `send_keys("\x03")` 中断。不要因为超时就重跑。
 >
 > ⚠️ **collect_until_exit 超时不同**：collect_until_exit 超时后会 **abort 远端任务**，进程被 kill。不要用于 fire-and-forget 场景。
 
@@ -323,7 +323,7 @@ split_pane_with(
 
 ### 收集大输出命令结果（collect_until_exit）
 ```
-# 比 exec 更高效，适合大输出命令
+# 适合大输出命令
 # ⚠️ 超时后会 abort 远端任务！不要用于 fire-and-forget 长任务
 1. spawn_command(host, session_name, pane_id, command="find / -name '*.log'")
 2. collect_until_exit(host, session_name, pane_id, max_bytes=10485760)
@@ -372,7 +372,7 @@ host_capabilities(host="tf01", check="stream.control")
 ### 性能优化
 - **避免 capture_pane 轮询**：使用 `stream_pane` 或 `wait_for_text` 替代
 - **批量操作**：多台主机用 `batch_exec` 而非循环调用 `exec`
-- **大输出命令**：用 `collect_until_exit` 而非 `exec`（避免多次 capture）
+- **大输出命令**：用 `collect_until_exit`（流式收集，比逐次 capture 更高效）
 - **合并诊断命令**：单主机多个只读诊断命令用 `&&` 合并为一个 `exec`（如 `df -h && free -m && uptime`），减少 LLM 推理轮次。可能触发 pager 的命令加 `--no-pager` 或 `| cat`
 - **并发控制**：`batch_*` 工具支持 `concurrency` 参数，默认 5
 

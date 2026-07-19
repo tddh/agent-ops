@@ -25,7 +25,7 @@ pub enum TerminalState {
 /// 检测终端当前状态
 ///
 /// 基于终端可见文本和光标位置，使用启发式规则判断终端状态。
-/// 检测必须在 `clean_text()` 之前运行，使用原始 `visible_text()` 输出。
+/// 检测基于原始 `visible_text()` 输出，在 `clean_text()` 去除 ANSI 码和空行之前运行。
 pub fn detect_terminal_state(text: &str, cursor_col: u16, cursor_visible: bool) -> TerminalState {
     let lines: Vec<&str> = text.lines().collect();
     if lines.is_empty() {

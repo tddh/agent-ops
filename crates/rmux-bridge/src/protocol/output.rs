@@ -87,6 +87,20 @@ impl ProtocolProxy {
                     } else {
                         resp["encoding"] = json!(null);
                     }
+                    // Path B 与 Path A 一致附带终端状态（一次本地 snapshot IPC）
+                    if let Ok(snapshot) = pane.snapshot().await {
+                        let raw_text = snapshot.visible_text();
+                        resp["terminal_state"] = json!(detect_terminal_state(
+                            &raw_text,
+                            snapshot.cursor.col,
+                            snapshot.cursor.visible,
+                        ));
+                        resp["cursor"] = json!({
+                            "row": snapshot.cursor.row,
+                            "col": snapshot.cursor.col,
+                            "visible": snapshot.cursor.visible,
+                        });
+                    }
                     resp
                 }
                 Err(e) => json!({"ok": false, "error": e.to_string()}),
@@ -153,32 +167,39 @@ impl ProtocolProxy {
             Ok(p) => p,
             Err(e) => return json!({"ok": false, "error": e.to_string()}),
         };
+        // 用 per-operation timeout 的 visible-wait，避免 SDK 默认 5s 超时
+        // （V1_DEFAULT_TIMEOUT）先于请求 timeout_ms 触发导致假超时。
         let timeout = std::time::Duration::from_millis(timeout_ms);
-        match tokio::time::timeout(timeout, pane.wait_for_text(text)).await {
-            Ok(Ok(())) => match pane.snapshot().await {
-                Ok(snapshot) => {
-                    let raw_text = snapshot.visible_text();
-                    let state = detect_terminal_state(
-                        &raw_text,
-                        snapshot.cursor.col,
-                        snapshot.cursor.visible,
-                    );
-                    json!({
-                        "ok": true,
-                        "found": true,
-                        "terminal_state": state,
-                        "cursor": {
-                            "row": snapshot.cursor.row,
-                            "col": snapshot.cursor.col,
-                            "visible": snapshot.cursor.visible,
-                        }
-                    })
+        match pane
+            .expect_visible_text()
+            .to_contain(text)
+            .timeout(timeout)
+            .await
+        {
+            Ok(snapshot) => {
+                let raw_text = snapshot.visible_text();
+                let state = detect_terminal_state(
+                    &raw_text,
+                    snapshot.cursor.col,
+                    snapshot.cursor.visible,
+                );
+                json!({
+                    "ok": true,
+                    "found": true,
+                    "terminal_state": state,
+                    "cursor": {
+                        "row": snapshot.cursor.row,
+                        "col": snapshot.cursor.col,
+                        "visible": snapshot.cursor.visible,
+                    }
+                })
+            }
+            Err(e) => {
+                if matches!(e, rmux_sdk::RmuxError::WaitTimeout { .. }) {
+                    json!({"ok": false, "found": false, "error": format!("timeout waiting for: {}", text)})
+                } else {
+                    json!({"ok": false, "error": e.to_string()})
                 }
-                Err(_) => json!({"ok": true, "found": true}),
-            },
-            Ok(Err(e)) => json!({"ok": false, "error": e.to_string()}),
-            Err(_) => {
-                json!({"ok": false, "found": false, "error": format!("timeout waiting for: {}", text)})
             }
         }
     }
@@ -254,14 +275,29 @@ impl ProtocolProxy {
             Ok(p) => p,
             Err(e) => return json!({"ok": false, "error": e.to_string()}),
         };
-        let timeout = std::time::Duration::from_millis(timeout_ms);
-        match tokio::time::timeout(timeout, pane.wait_exit()).await {
-            Ok(Ok(Some(state))) => {
-                json!({"ok": true, "exited": true, "exit_code": state.code, "signal": state.signal})
+        // 自行轮询 pane.info() 而非 pane.wait_exit()：后者受 SDK 默认 5s
+        // （V1_DEFAULT_TIMEOUT）限制，超过 5s 的等待会假超时。
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        loop {
+            let info = match pane.info().await {
+                Ok(i) => i,
+                Err(e) => return json!({"ok": false, "error": e.to_string()}),
+            };
+            match info.panes.first() {
+                None => return json!({"ok": true, "exited": false}),
+                Some(p) => {
+                    if let Some(ref state) = p.exit_state {
+                        return json!({"ok": true, "exited": true, "exit_code": state.code, "signal": state.signal});
+                    }
+                    if matches!(p.process, rmux_sdk::PaneProcessState::Exited) {
+                        return json!({"ok": true, "exited": false});
+                    }
+                }
             }
-            Ok(Ok(None)) => json!({"ok": true, "exited": false}),
-            Ok(Err(e)) => json!({"ok": false, "error": e.to_string()}),
-            Err(_) => json!({"ok": false, "error": "timeout waiting for exit"}),
+            if std::time::Instant::now() >= deadline {
+                return json!({"ok": false, "error": "timeout waiting for exit"});
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
 

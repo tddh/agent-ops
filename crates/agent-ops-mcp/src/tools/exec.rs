@@ -194,17 +194,40 @@ pub(crate) struct ExecResult {
     pub(crate) refused: bool,
 }
 
-/// 在已有 session + pane 中执行一次性命令并等待结果。
-/// 抽取自 `exec` 函数，供 `exec` 和 `batch_exec` 复用。
-/// 不负责建连、建 session、写 audit。
-pub(crate) async fn exec_in_session<S>(
+/// probe 初始窗口行数：大多数命令输出在此范围内，一次 capture 完成
+const PROBE_WINDOW: i64 = 20;
+/// 窗口扩大上限：与 daemon 默认 history-limit（50000）对齐
+const SCROLLBACK_CAP: i64 = 50000;
+
+/// 命令发出后的状态：marker 与计时信息，用于断连重连后继续等待 sentinel。
+struct SentCommand {    precheck_state: Option<serde_json::Value>,
+    start_marker: String,
+    sentinel_marker: String,
+    timeout_ms: u64,
+    started_at: std::time::Instant,
+}
+
+enum SendOutcome {
+    Sent(SentCommand),
+    Done(ExecResult),
+}
+
+/// 单轮等待的结果：Done 为终态（含成功/超时/业务错误），Lost 表示连接丢失。
+/// sentinel 是远端 pane 上的持久状态，Lost 后换连接继续等即可恢复。
+enum AwaitOutcome {
+    Done(ExecResult),
+    Lost,
+}
+
+/// precheck + send_keys：命令发出前的阶段。此阶段连接失败直接报错，
+/// 不做自动重试——无法确定命令是否已发出，自动重发可能导致命令重复执行。
+async fn exec_send<S>(
     stream: &mut S,
     session_name: &str,
     pane_id: &str,
     command: &str,
     timeout_ms: u64,
-    max_lines: usize,
-) -> ExecResult
+) -> SendOutcome
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
 {
@@ -256,7 +279,7 @@ where
             _ => "Terminal state is unknown. Use capture_pane to inspect terminal content.",
         };
 
-        return ExecResult {
+        return SendOutcome::Done(ExecResult {
             ok: false,
             output: String::new(),
             exit_code: None,
@@ -266,7 +289,7 @@ where
             cursor: None,
             pre_terminal_state: precheck_state,
             refused: true,
-        };
+        });
     }
 
     let marker_id = Uuid::new_v4().to_string();
@@ -281,6 +304,20 @@ where
         e = sentinel_marker
     );
 
+    let send_failed = |e: String| {
+        SendOutcome::Done(ExecResult {
+            ok: false,
+            output: String::new(),
+            exit_code: None,
+            duration_ms: 0,
+            error: Some(e),
+            terminal_state: None,
+            cursor: None,
+            pre_terminal_state: precheck_state.clone(),
+            refused: false,
+        })
+    };
+
     if let Err(e) = send_json_frame(
         stream,
         &json!({
@@ -292,34 +329,12 @@ where
     )
     .await
     {
-        return ExecResult {
-            ok: false,
-            output: String::new(),
-            exit_code: None,
-            duration_ms: 0,
-            error: Some(format!("send_keys: {e}")),
-            terminal_state: None,
-            cursor: None,
-            pre_terminal_state: precheck_state.clone(),
-            refused: false,
-        };
+        return send_failed(format!("send_keys: {e}"));
     }
 
     let send_resp = match recv_json_frame(stream).await {
         Ok(r) => r,
-        Err(e) => {
-            return ExecResult {
-                ok: false,
-                output: String::new(),
-                exit_code: None,
-                duration_ms: 0,
-                error: Some(format!("send_keys: {e}")),
-                terminal_state: None,
-                cursor: None,
-                pre_terminal_state: precheck_state.clone(),
-                refused: false,
-            }
-        }
+        Err(e) => return send_failed(format!("send_keys: {e}")),
     };
 
     if !send_resp["ok"].as_bool().unwrap_or(false) {
@@ -327,151 +342,307 @@ where
             .as_str()
             .unwrap_or("send_keys failed")
             .to_string();
+        return send_failed(err);
+    }
+
+    SendOutcome::Sent(SentCommand {
+        precheck_state,
+        start_marker,
+        sentinel_marker,
+        timeout_ms,
+        started_at: std::time::Instant::now(),
+    })
+}
+
+/// 单轮等待 sentinel：先小窗口探测（覆盖快命令与重连后命令已完成的场景），
+/// 未出现则 wait_for_text 等待剩余预算；出现后指数扩大窗口直到 start_marker
+/// 进入视野，保证大输出完整且小输出不多传。
+async fn exec_await_once<S>(
+    stream: &mut S,
+    session_name: &str,
+    pane_id: &str,
+    sent: &SentCommand,
+    max_lines: usize,
+) -> AwaitOutcome
+where
+    S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+{
+    let probe_text = match capture_window(stream, session_name, pane_id, PROBE_WINDOW).await {
+        Ok(t) => t,
+        Err(_) => return AwaitOutcome::Lost,
+    };
+
+    let mut text = probe_text;
+    if text.rfind(&sent.sentinel_marker).is_none() {
+        let deadline = sent.started_at + std::time::Duration::from_millis(sent.timeout_ms);
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return AwaitOutcome::Done(timeout_exec_result(sent, text, None, None, None));
+        }
+
+        // 用 bridge 端 event-driven 的 wait_for_text 等待 sentinel 标记出现
+        if send_json_frame(
+            stream,
+            &json!({
+                "type": "wait_for_text",
+                "session_name": session_name,
+                "pane_id": pane_id,
+                "text": sent.sentinel_marker.as_str(),
+                "timeout_ms": remaining.as_millis() as u64,
+            }),
+        )
+        .await
+        .is_err()
+        {
+            return AwaitOutcome::Lost;
+        }
+        let wait_resp = match recv_json_frame(stream).await {
+            Ok(r) => r,
+            Err(_) => return AwaitOutcome::Lost,
+        };
+
+        // bridge 协议约定：超时返回 {"ok":false,"found":false}；
+        // 真实错误（pane 不存在、session 丢失等）返回 {"ok":false,"error":...} 且无 found 字段。
+        // 后者必须如实上报，不能误报为超时。
+        if wait_resp["ok"].as_bool() == Some(false) && wait_resp.get("found").is_none() {
+            return AwaitOutcome::Done(ExecResult {
+                ok: false,
+                output: text,
+                exit_code: None,
+                duration_ms: sent.started_at.elapsed().as_millis() as u64,
+                error: Some(format!(
+                    "wait_for_text: {}",
+                    wait_resp["error"].as_str().unwrap_or("unknown bridge error")
+                )),
+                terminal_state: None,
+                cursor: None,
+                pre_terminal_state: sent.precheck_state.clone(),
+                refused: false,
+            });
+        }
+
+        if !wait_resp["found"].as_bool().unwrap_or(false) {
+            return AwaitOutcome::Done(timeout_exec_result(sent, text, None, None, None));
+        }
+
+        // sentinel 刚出现：重新取小窗口（wait 期间屏幕已变化）
+        text = match capture_window(stream, session_name, pane_id, PROBE_WINDOW).await {
+            Ok(t) => t,
+            Err(_) => return AwaitOutcome::Lost,
+        };
+    }
+
+    // sentinel 已在窗口内：指数扩大窗口直到 start_marker 进入视野
+    let (mut full_text, window) =
+        match fetch_until_marker(stream, session_name, pane_id, sent, text, PROBE_WINDOW).await {
+            Ok(r) => r,
+            Err(_) => return AwaitOutcome::Lost,
+        };
+
+    // wait/probe 的文本匹配可能命中 echo 回显（此时 "$?" 尚未展开为数字，
+    // 输出行还没上屏）：等 exit code 可解析（输出行上屏）再解析，
+    // 否则会把 "$?" 字面当退出码导致 exit_code=None
+    for _ in 0..6 {
+        if parse_exit_code(&full_text, &sent.sentinel_marker).is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        full_text = match capture_window(stream, session_name, pane_id, window).await {
+            Ok(t) => t,
+            Err(_) => return AwaitOutcome::Lost,
+        };
+    }
+
+    AwaitOutcome::Done(parse_exec_output(full_text, None, None, sent, max_lines))
+}
+
+/// capture pane 尾部 window 行（start_line 负值，走 scrollback）。
+async fn capture_window<S>(
+    stream: &mut S,
+    session_name: &str,
+    pane_id: &str,
+    window: i64,
+) -> Result<String, ()>
+where
+    S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+{
+    let req = json!({
+        "type": "capture_pane",
+        "session_name": session_name,
+        "pane_id": pane_id,
+        "start_line": -window,
+    });
+    send_json_frame(stream, &req).await.map_err(|_| ())?;
+    let resp = recv_json_frame(stream).await.map_err(|_| ())?;
+    Ok(resp["text"].as_str().unwrap_or("").to_string())
+}
+
+/// 从已有窗口文本开始，指数扩大（20→40→…→SCROLLBACK_CAP）直到 start_marker
+/// 进入视野。marker 已滚出 scrollback 时返回最大窗口（parse 走 fallback）。
+/// 返回（文本， 最终窗口行数）供后续按同窗口重取。
+async fn fetch_until_marker<S>(
+    stream: &mut S,
+    session_name: &str,
+    pane_id: &str,
+    sent: &SentCommand,
+    mut text: String,
+    mut window: i64,
+) -> Result<(String, i64), ()>
+where
+    S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+{
+    loop {
+        if text.rfind(&sent.start_marker).is_some() {
+            return Ok((text, window));
+        }
+        if window >= SCROLLBACK_CAP {
+            return Ok((text, window));
+        }
+        window = (window * 2).min(SCROLLBACK_CAP);
+        text = capture_window(stream, session_name, pane_id, window).await?;
+    }
+}
+
+/// 从 sentinel 最后一次出现之后解析退出码（"[xxx N]" 输出行）。
+/// 命中 echo 回显（"$?" 尚未展开为数字）时返回 None。
+fn parse_exit_code(full_text: &str, sentinel_marker: &str) -> Option<i32> {
+    let pos = full_text.rfind(sentinel_marker)?;
+    let after = &full_text[pos + sentinel_marker.len()..];
+    let digits: String = after
+        .trim()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+/// sentinel 已出现后，从 capture 文本截取 start_marker → sentinel 区间（含提示符、
+/// 命令回显等完整上下文，不做行级过滤），解析退出码并按 max_lines 截断尾部。
+fn parse_exec_output(
+    full_text: String,
+    terminal_state: Option<serde_json::Value>,
+    cursor: Option<serde_json::Value>,
+    sent: &SentCommand,
+    max_lines: usize,
+) -> ExecResult {
+    let sentinel_marker = sent.sentinel_marker.as_str();
+    let duration_ms = sent.started_at.elapsed().as_millis() as u64;
+
+    // rfind：echo sentinel 的命令行也含 sentinel 子串，取最后一次出现
+    // （输出行 "[xxx N]"）才能截出完整段落且不留残片
+    if let Some(pos) = full_text.rfind(sentinel_marker) {
+        let exit_code = parse_exit_code(&full_text, sentinel_marker);
+
+        let output_before_sentinel = &full_text[..pos];
+        let current_output =
+            if let Some(start_pos) = output_before_sentinel.rfind(&sent.start_marker) {
+                let after_start = start_pos + sent.start_marker.len();
+                &output_before_sentinel[after_start..]
+            } else {
+                &full_text[..pos]
+            };
+
+        let trimmed = current_output.trim();
+        let output = if max_lines > 0 {
+            let lines: Vec<&str> = trimmed.lines().collect();
+            if lines.len() > max_lines {
+                lines[lines.len() - max_lines..].join("\n")
+            } else {
+                trimmed.to_string()
+            }
+        } else {
+            trimmed.to_string()
+        };
+
         return ExecResult {
-            ok: false,
-            output: String::new(),
-            exit_code: None,
-            duration_ms: 0,
-            error: Some(err),
-            terminal_state: None,
-            cursor: None,
-            pre_terminal_state: precheck_state.clone(),
+            ok: exit_code == Some(0),
+            output,
+            exit_code,
+            duration_ms,
+            error: None,
+            terminal_state,
+            cursor,
+            pre_terminal_state: sent.precheck_state.clone(),
             refused: false,
         };
     }
 
-    let start = std::time::Instant::now();
-    let deadline = start + std::time::Duration::from_millis(timeout_ms);
-    let mut last_text = String::new();
-    let mut last_terminal_state: Option<serde_json::Value> = None;
-    let mut last_cursor: Option<serde_json::Value> = None;
-    let mut poll_interval = std::time::Duration::from_millis(50);
+    ExecResult {
+        ok: false,
+        output: full_text,
+        exit_code: None,
+        duration_ms,
+        error: Some("sentinel not found in captured output".to_string()),
+        terminal_state,
+        cursor,
+        pre_terminal_state: sent.precheck_state.clone(),
+        refused: false,
+    }
+}
 
-    loop {
-        if let Err(e) = send_json_frame(
-            stream,
-            &json!({
-                "type": "capture_pane",
-                "session_name": session_name,
-                "pane_id": pane_id,
-                "max_lines": max_lines,
-            }),
-        )
-        .await
-        {
-            return ExecResult {
-                ok: false,
-                output: last_text,
-                exit_code: None,
-                duration_ms: start.elapsed().as_millis() as u64,
-                error: Some(format!("capture_pane: {e}")),
-                terminal_state: last_terminal_state,
-                cursor: last_cursor,
-                pre_terminal_state: precheck_state.clone(),
-                refused: false,
-            };
-        }
-        let resp = match recv_json_frame(stream).await {
-            Ok(r) => r,
-            Err(e) => {
-                return ExecResult {
+fn timeout_exec_result(
+    sent: &SentCommand,
+    full_text: String,
+    terminal_state: Option<serde_json::Value>,
+    cursor: Option<serde_json::Value>,
+    reason: Option<&str>,
+) -> ExecResult {
+    let error = match reason {
+        Some(r) => format!(
+            "timeout waiting for sentinel after {}ms ({})",
+            sent.timeout_ms, r
+        ),
+        None => format!("timeout waiting for sentinel after {}ms", sent.timeout_ms),
+    };
+    ExecResult {
+        ok: false,
+        output: full_text,
+        exit_code: None,
+        duration_ms: sent.started_at.elapsed().as_millis() as u64,
+        error: Some(error),
+        terminal_state,
+        cursor,
+        pre_terminal_state: sent.precheck_state.clone(),
+        refused: false,
+    }
+}
+
+/// 在已有 session + pane 中执行一次性命令并等待结果。
+/// 供 `batch_exec` 复用：单轮等待，不做断连重连（batch 场景 host 级失败直接上报）。
+/// 不负责建连、建 session、写 audit。
+pub(crate) async fn exec_in_session<S>(
+    stream: &mut S,
+    session_name: &str,
+    pane_id: &str,
+    command: &str,
+    timeout_ms: u64,
+    max_lines: usize,
+) -> ExecResult
+where
+    S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+{
+    match exec_send(stream, session_name, pane_id, command, timeout_ms).await {
+        SendOutcome::Done(r) => r,
+        SendOutcome::Sent(sent) => {
+            match exec_await_once(stream, session_name, pane_id, &sent, max_lines).await
+            {
+                AwaitOutcome::Done(r) => r,
+                AwaitOutcome::Lost => ExecResult {
                     ok: false,
-                    output: last_text,
+                    output: String::new(),
                     exit_code: None,
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    error: Some(format!("recv: {e}")),
-                    terminal_state: last_terminal_state,
-                    cursor: last_cursor,
-                    pre_terminal_state: precheck_state.clone(),
+                    duration_ms: sent.started_at.elapsed().as_millis() as u64,
+                    error: Some("connection lost while waiting for command".to_string()),
+                    terminal_state: None,
+                    cursor: None,
+                    pre_terminal_state: sent.precheck_state.clone(),
                     refused: false,
-                }
+                },
             }
-        };
-        last_text = resp["text"].as_str().unwrap_or("").to_string();
-        last_terminal_state = resp.get("terminal_state").cloned();
-        last_cursor = resp.get("cursor").cloned();
-
-        if let Some(pos) = last_text.find(&sentinel_marker) {
-            let after_sentinel = &last_text[pos + sentinel_marker.len()..];
-            let exit_code: Option<i32> = after_sentinel
-                .trim()
-                .chars()
-                .take_while(|c| c.is_ascii_digit())
-                .collect::<String>()
-                .parse()
-                .ok();
-
-            let output_before_sentinel = &last_text[..pos];
-            let current_output =
-                if let Some(start_pos) = output_before_sentinel.rfind(&start_marker) {
-                    let after_start = start_pos + start_marker.len();
-                    &output_before_sentinel[after_start..]
-                } else {
-                    &last_text[..pos]
-                };
-
-            let output_lines: Vec<&str> = current_output
-                .lines()
-                .filter(|line| {
-                    let t = line.trim();
-                    if t == "clear" {
-                        return false;
-                    }
-                    if t.starts_with(command) || t == command {
-                        return false;
-                    }
-                    if t.starts_with("echo") && t.contains(&sentinel_marker) {
-                        return false;
-                    }
-                    if t.starts_with('[')
-                        && t.len() >= 4
-                        && t.as_bytes().get(1).is_some_and(|b| b.is_ascii_hexdigit())
-                        && t.as_bytes().get(2).is_some_and(|b| b.is_ascii_hexdigit())
-                        && t.as_bytes().get(3).is_some_and(|b| b.is_ascii_hexdigit())
-                        && t.get(4..).is_some_and(|s| s == "]" || s.starts_with(" "))
-                    {
-                        return false;
-                    }
-                    true
-                })
-                .collect();
-
-            let output = output_lines.join("\n").trim().to_string();
-            let duration_ms = start.elapsed().as_millis() as u64;
-
-            return ExecResult {
-                ok: exit_code == Some(0),
-                output,
-                exit_code,
-                duration_ms,
-                error: None,
-                terminal_state: last_terminal_state,
-                cursor: last_cursor,
-                pre_terminal_state: precheck_state.clone(),
-                refused: false,
-            };
         }
-
-        if std::time::Instant::now() >= deadline {
-            let duration_ms = start.elapsed().as_millis() as u64;
-            return ExecResult {
-                ok: false,
-                output: last_text,
-                exit_code: None,
-                duration_ms,
-                error: Some(format!(
-                    "timeout waiting for sentinel after {}ms",
-                    timeout_ms
-                )),
-                terminal_state: last_terminal_state,
-                cursor: last_cursor,
-                pre_terminal_state: precheck_state.clone(),
-                refused: false,
-            };
-        }
-
-        tokio::time::sleep(poll_interval).await;
-        poll_interval = std::cmp::min(poll_interval * 2, std::time::Duration::from_millis(500));
     }
 }
 
@@ -482,7 +653,7 @@ pub(crate) async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
         .context("missing 'session_name'")?;
     let pane_id = args["pane_id"].as_str().context("missing 'pane_id'")?;
     let command = args["command"].as_str().context("missing 'command'")?;
-    let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(30000);
+    let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(600000);
     let max_lines = args["max_lines"]
         .as_u64()
         .map(|v| v as usize)
@@ -510,15 +681,54 @@ pub(crate) async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
         let _ = recv_json_frame(&mut tls).await;
     }
 
-    let result = exec_in_session(
-        &mut tls,
-        session_name,
-        pane_id,
-        command,
-        timeout_ms,
-        max_lines,
-    )
-    .await;
+    let result = match exec_send(&mut tls, session_name, pane_id, command, timeout_ms).await {
+        SendOutcome::Done(r) => r,
+        SendOutcome::Sent(sent) => {
+            let deadline = sent.started_at + std::time::Duration::from_millis(timeout_ms);
+            'outer: loop {
+                match exec_await_once(&mut tls, session_name, pane_id, &sent, max_lines)
+                    .await
+                {
+                    AwaitOutcome::Done(r) => break 'outer r,
+                    AwaitOutcome::Lost => {
+                        // sentinel 是远端 pane 上的持久状态，断连不影响命令执行；
+                        // 退避重连后继续等待，重连耗时计入总预算
+                        let mut backoff = std::time::Duration::from_millis(500);
+                        loop {
+                            let now = std::time::Instant::now();
+                            if now >= deadline {
+                                break 'outer timeout_exec_result(
+                                    &sent,
+                                    String::new(),
+                                    None,
+                                    None,
+                                    Some("connection lost and reconnect failed"),
+                                );
+                            }
+                            tokio::time::sleep(backoff.min(deadline - now)).await;
+                            match connect_to_bridge_hybrid(
+                                &host.bridge_addr,
+                                &host.bridge_token,
+                                &ctx.ca_cert_path,
+                                3,
+                            )
+                            .await
+                            {
+                                Ok(new_tls) => {
+                                    tls = new_tls;
+                                    break;
+                                }
+                                Err(_) => {
+                                    backoff =
+                                        (backoff * 2).min(std::time::Duration::from_secs(5));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
 
     let output_summary: String = result.output.chars().take(500).collect();
     super::audit(

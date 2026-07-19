@@ -7,6 +7,7 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 enum TerminalAction {
     Input(Vec<u8>),
     Resize(u16, u16),
@@ -14,6 +15,7 @@ enum TerminalAction {
     Ignore,
 }
 
+#[allow(dead_code)]
 fn translate_terminal_event(event: Event) -> TerminalAction {
     match event {
         Event::Key(key_event) => translate_key_event(key_event),
@@ -22,56 +24,62 @@ fn translate_terminal_event(event: Event) -> TerminalAction {
     }
 }
 
-fn translate_key_event(key: KeyEvent) -> TerminalAction {
+/// Translate a crossterm KeyEvent to raw terminal bytes (for PTY forwarding).
+/// Returns empty vec for Release events.
+pub fn translate_key_to_bytes(key: KeyEvent) -> Vec<u8> {
     if key.kind == KeyEventKind::Release {
-        return TerminalAction::Ignore;
+        return vec![];
     }
-
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-
-    // Check for Ctrl+\ (both as structured event and raw control character)
-    // Crossterm may send Ctrl+\ as either:
-    // 1. KeyCode::Char('\\') with KeyModifiers::CONTROL
-    // 2. KeyCode::Char('\x1c') as a raw control character (0x1c = 28)
-    if ctrl && key.code == KeyCode::Char('\\') {
-        return TerminalAction::Detach;
-    }
-    if let KeyCode::Char(c) = key.code {
-        if c == '\x1c' {
-            return TerminalAction::Detach;
-        }
-    }
-
     match key.code {
-        KeyCode::Char(c) => {
-            if ctrl {
-                let byte = (c as u8).wrapping_sub(b'a').wrapping_add(1);
-                TerminalAction::Input(vec![byte])
-            } else {
-                let mut buf = [0u8; 4];
-                let s = c.encode_utf8(&mut buf);
-                TerminalAction::Input(s.as_bytes().to_vec())
-            }
+        KeyCode::Char(c) if ctrl => {
+            vec![(c as u8).wrapping_sub(b'a').wrapping_add(1)]
         }
-        KeyCode::Enter => TerminalAction::Input(vec![b'\r']),
-        KeyCode::Backspace => TerminalAction::Input(vec![0x7f]),
-        KeyCode::Tab => TerminalAction::Input(vec![b'\t']),
-        KeyCode::Esc => TerminalAction::Input(vec![0x1b]),
-        KeyCode::Up => TerminalAction::Input(vec![0x1b, b'[', b'A']),
-        KeyCode::Down => TerminalAction::Input(vec![0x1b, b'[', b'B']),
-        KeyCode::Right => TerminalAction::Input(vec![0x1b, b'[', b'C']),
-        KeyCode::Left => TerminalAction::Input(vec![0x1b, b'[', b'D']),
-        KeyCode::Home => TerminalAction::Input(vec![0x1b, b'[', b'H']),
-        KeyCode::End => TerminalAction::Input(vec![0x1b, b'[', b'F']),
-        KeyCode::PageUp => TerminalAction::Input(vec![0x1b, b'[', b'5', b'~']),
-        KeyCode::PageDown => TerminalAction::Input(vec![0x1b, b'[', b'6', b'~']),
-        KeyCode::Delete => TerminalAction::Input(vec![0x1b, b'[', b'3', b'~']),
-        KeyCode::Insert => TerminalAction::Input(vec![0x1b, b'[', b'2', b'~']),
-        _ => TerminalAction::Ignore,
+        KeyCode::Char(c) => {
+            let mut buf = [0u8; 4];
+            c.encode_utf8(&mut buf).as_bytes().to_vec()
+        }
+        KeyCode::Enter => vec![b'\r'],
+        KeyCode::Backspace => vec![0x7f],
+        KeyCode::Tab => vec![b'\t'],
+        KeyCode::Esc => vec![0x1b],
+        KeyCode::Up => vec![0x1b, b'[', b'A'],
+        KeyCode::Down => vec![0x1b, b'[', b'B'],
+        KeyCode::Right => vec![0x1b, b'[', b'C'],
+        KeyCode::Left => vec![0x1b, b'[', b'D'],
+        _ => vec![],
     }
 }
 
-async fn connect_to_bridge(
+#[allow(dead_code)]
+fn translate_key_event(key: KeyEvent) -> TerminalAction {
+    // Check for Ctrl+\ detach BEFORE Translate (only on Press)
+    if key.kind == KeyEventKind::Press {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+        // Check for Ctrl+\ (both as structured event and raw control character)
+        // Crossterm may send Ctrl+\ as either:
+        // 1. KeyCode::Char('\\') with KeyModifiers::CONTROL
+        // 2. KeyCode::Char('\x1c') as a raw control character (0x1c = 28)
+        if ctrl && key.code == KeyCode::Char('\\') {
+            return TerminalAction::Detach;
+        }
+        if let KeyCode::Char(c) = key.code {
+            if c == '\x1c' {
+                return TerminalAction::Detach;
+            }
+        }
+    }
+
+    let bytes = translate_key_to_bytes(key);
+    if bytes.is_empty() {
+        TerminalAction::Ignore
+    } else {
+        TerminalAction::Input(bytes)
+    }
+}
+
+pub async fn connect_to_bridge_quic(
     bridge_addr: &str,
     bridge_token: &str,
     ca_cert_path: &str,
@@ -120,6 +128,7 @@ async fn connect_to_bridge(
     Ok(conn)
 }
 
+#[allow(dead_code)]
 pub async fn connect(
     config: &HostConfig,
     ca_cert_path: &str,
@@ -127,7 +136,7 @@ pub async fn connect(
     pane_id: &str,
     readonly: bool,
 ) -> Result<()> {
-    let conn = connect_to_bridge(&config.bridge_addr, &config.bridge_token, ca_cert_path)
+    let conn = connect_to_bridge_quic(&config.bridge_addr, &config.bridge_token, ca_cert_path)
         .await
         .context("failed to connect to bridge")?;
 
@@ -172,6 +181,7 @@ pub async fn connect(
 /// 因为两者会竞争 stdin fd，导致按键丢失或延迟。
 /// 此函数统一处理所有终端事件（按键、Resize、粘贴等），
 /// 通过 translate_terminal_event 转换为协议动作后发送。
+#[allow(dead_code)]
 async fn terminal_event_loop(
     data_send: &mut quinn::SendStream,
     ctrl_send: Arc<tokio::sync::Mutex<quinn::SendStream>>,
@@ -204,6 +214,7 @@ async fn terminal_event_loop(
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn quic_to_stdout(recv: &mut quinn::RecvStream) -> Result<()> {
     let mut stdout = tokio::io::stdout();
     let mut buf = [0u8; 4096];
@@ -215,7 +226,8 @@ async fn quic_to_stdout(recv: &mut quinn::RecvStream) -> Result<()> {
 }
 
 pub async fn list_sessions(config: &HostConfig, ca_cert_path: &str) -> Result<()> {
-    let conn = connect_to_bridge(&config.bridge_addr, &config.bridge_token, ca_cert_path).await?;
+    let conn =
+        connect_to_bridge_quic(&config.bridge_addr, &config.bridge_token, ca_cert_path).await?;
     let (mut send, mut recv) = conn.open_bi().await?;
     send.write_all(&[0x01]).await?;
 
@@ -255,7 +267,8 @@ pub async fn find_lowest_pane(
     ca_cert_path: &str,
     session_name: &str,
 ) -> Result<String> {
-    let conn = connect_to_bridge(&config.bridge_addr, &config.bridge_token, ca_cert_path).await?;
+    let conn =
+        connect_to_bridge_quic(&config.bridge_addr, &config.bridge_token, ca_cert_path).await?;
     let (mut send, mut recv) = conn.open_bi().await?;
     send.write_all(&[0x01]).await?;
 

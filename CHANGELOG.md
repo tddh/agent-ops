@@ -8,6 +8,9 @@
   - `protocol.rs` (1965行) → `protocol/` 目录 7 个子模块
   - `main.rs` (1163行) → `handler.rs` + `audit_cli.rs` + `schema.rs`
   - `router.rs` `RwLock::unwrap()` 改为 `expect()`，防止 poisoned lock panic
+- **Exec 输出不再过滤 prompt 行**：`exec` 返回的 `output` 现在包含 start_marker → sentinel 区间的完整终端上下文（含 shell 提示符、命令回显），不做行级过滤——所见即所得。旧版本会过滤掉提示符和命令回显行
+- **Exec 等待机制从轮询改为事件驱动**：命令发送后通过 bridge 端 `wait_for_text` 阻塞等待 sentinel 标记出现，替代旧的 MCP 侧轮询 `capture_pane` 方式，降低网络开销和延迟
+- **Exec 默认超时从 30s 增加到 600s（10 分钟）**：适应编译、包安装等较长时间命令，仅作为安全兜底。正常命令无需手动设置 `timeout_ms`
 
 ### Added
 - **配置热加载**：支持在不重启 MCP Server 的情况下重新加载 `hosts.yaml` 配置

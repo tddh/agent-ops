@@ -1,5 +1,5 @@
 [Unit]
-Description=RMUX Bridge - TCP/TLS to Unix socket proxy
+Description=RMUX Bridge - QUIC to Unix socket proxy
 After=network.target rmux-daemon.service
 Requires=rmux-daemon.service
 
@@ -10,8 +10,8 @@ ExecStart=/opt/agent-ops/rmux-bridge \
     --quic-listen-addr 0.0.0.0:9778 \
     --max-connections 256 \
     --rmux-socket %h/.rmux/rmux-0/default \
-    --tls-cert /opt/agent-ops/certs/${HOST_IP}.crt \
-    --tls-key /opt/agent-ops/certs/${HOST_IP}.key
+    --tls-cert /opt/agent-ops/certs/<HOST_IP>.crt \
+    --tls-key /opt/agent-ops/certs/<HOST_IP>.key
 Restart=always
 RestartSec=5
 

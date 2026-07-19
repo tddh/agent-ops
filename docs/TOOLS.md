@@ -8,7 +8,7 @@
 - `session_name` — 会话名（如 `s1`、`agent`）
 - `pane_id` — 窗格 ID（如 `%0`、`%4`）
 - `window_index` — 窗口索引，从 0 开始
-- `timeout_ms` — 超时毫秒数，默认 30000
+- `timeout_ms` — 超时毫秒数，默认 30000（`exec` / `batch_exec` 为 600000）
 - 返回值统一为 JSON：`{"ok": true/false, ...}`
 
 ---
@@ -166,6 +166,8 @@
 
 **返回** `{"ok": true, "found": true, "terminal_state": "ready", "cursor": {"row": 0, "col": 14, "visible": true}}`
 
+超时：`{"ok": false, "found": false, "error": "timeout waiting for: ..."}`
+
 ### `stream_pane`
 
 **阻塞读取窗格输出流**。首次调用自动创建流（返回当前快照 + 后续增量输出），后续调用复用同一流（只返回新增内容）。阻塞直到有新数据或超时。适用于长命令（编译、日志监控）的实时输出跟踪，替代 capture_pane 轮询。
@@ -177,7 +179,7 @@
 | `pane_id` | string | ✅ |
 | `timeout_ms` | number | ❌ (默认 10000) |
 
-**返回** `{"ok": true, "text": "新增输出内容..."}` 或 `{"ok": true, "text": ""}`（超时无数据）或 `{"ok": true, "text": "", "done": true}`（流已关闭）
+**返回** `{"text": "新增输出内容..."}` 或 `{"text": ""}`（超时无数据或流断开）
 
 ### `find_pane_text`
 
@@ -320,7 +322,9 @@
 
 ### `exec`
 
-一站式命令执行。内部自动完成：安全检查 → 清屏 → 发送命令 → 等待完成 → 捕获输出 → 清洗。
+一站式命令执行。内部自动完成：安全检查 → 发送命令（注入 start/end 标记）→ 事件驱动等待结束标记 → 从 scrollback 渐进扩大窗口捕获 → 截取标记区间原文返回。
+
+**输出格式**：`output` 为 start_marker → sentinel 区间内的**完整终端上下文**（含 shell 提示符、命令回显），不做行级过滤——所见即所得。大输出命令（数百/数千行）在 daemon history-limit（默认 50000 行）内完整捕获。
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|:---:|------|
@@ -328,8 +332,8 @@
 | `session_name` | string | ✅ | 会话名称 |
 | `pane_id` | string | ✅ | 窗格 ID，如 `%4` |
 | `command` | string | ✅ | shell 命令 |
-| `timeout_ms` | number | | 命令执行超时毫秒数，默认 30000 |
-| `max_lines` | integer | | 默认 200，0=不限制 |
+| `timeout_ms` | number | | 兜底超时毫秒数，默认 600000（10 分钟）。正常命令（含编译、apt/yum 安装、docker pull）无需设置——等待命令执行完毕是默认行为 |
+| `max_lines` | integer | | 保留输出的最后 N 行（默认 200，0=不限制）。完整输出始终从 scrollback 捕获，此参数仅截断返回量 |
 | `clear_screen` | boolean | | 执行前是否清屏，默认 false |
 
 > **安全检查**：exec 执行前会检测终端状态。如果终端不在 `ready` 状态（如 vim、less、password prompt、REPL 等），exec 会拒绝执行并返回 `refused: true`。这是为了防止命令注入到非 shell 环境。
@@ -354,10 +358,9 @@
 
 > 对不自动退出的命令，请用 `send_keys` 发送，然后用 `wait_for_text`/`capture_pane` 观察输出，用 `send_keys("\x03")` 发送 Ctrl-C 中断。
 
-> ⚠️ **长时间命令**（如 `ansible-playbook`、`terraform apply`、大型编译等）：默认 30s 超时不够，需要显式传 `timeout_ms`（如 `600000` = 10 分钟）。更重要的是 — `exec` 超时后**命令仍在远端运行**，session 保留。你可以：
-> - 设大 `timeout_ms` 一次等到底
-> - 或设短超时 + 后期 `capture_pane` 查看进度、`wait_for_text("PLAY RECAP")` 等完成标志
-> - 推荐长时间命令用 `shell_command` 启动 + `wait_for_text`/`stream_pane` 监控进度，比 exec 更灵活
+> **断连自愈**：等待期间连接断开（bridge 重启、网络抖动、QUIC idle）时，exec 自动退避重连并继续等待——sentinel 标记存在于远端 pane 上，重连不影响命令执行，整个恢复过程计入同一时间预算。
+
+> ⚠️ **超长时间命令**（如 `ansible-playbook`、`terraform apply`、超大型编译等可能超过 10 分钟的任务）：推荐用 `shell_command`/`spawn_command` 启动 + `collect_until_exit`/`stream_pane` 收集结果，比 exec 更合适。`exec` 超时后**命令仍在远端运行**，session 保留，可以后期 `capture_pane` 查看进度、`wait_for_text("PLAY RECAP")` 等完成标志 |
 
 ### `wait_exit`
 
@@ -374,7 +377,7 @@
 
 ### `collect_until_exit`
 
-收集 pane 从此刻到进程退出的全部输出。比 `exec` 的哨兵轮询方式更高效，适合大输出量的命令。
+收集 pane 从此刻到进程退出的全部输出。适合大输出量的命令。
 
 > ⚠️ Pane 进程**必须先已运行**（通过 `spawn_command` 或 `exec` 启动）。输出以 base64 编码返回。
 
@@ -914,13 +917,13 @@ agent-ops-mcp audit cleanup [--db <path>] [--older-than <days>] [--max-size <mb>
 
 ### `batch_exec`
 
-Execute the same command on multiple hosts concurrently. Sends the command to all specified hosts in parallel, waits for each to complete via sentinel polling, captures output per host, and returns results keyed by hostname. Host-level failures (connection refused, timeout) do not affect other hosts. Non-zero exit codes set per-host ok=false (but output is always captured — check per-host exit_code). For self-terminating commands only.
+Execute the same command on multiple hosts concurrently. Sends the command to all specified hosts in parallel, waits for each to complete via sentinel markers (event-driven detection), captures output per host, and returns results keyed by hostname. Host-level failures (connection refused, timeout) do not affect other hosts. Non-zero exit codes set per-host ok=false (but output is always captured — check per-host exit_code). For self-terminating commands only.
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|:---:|------|
 | `hosts` | string[] | ✅ | 主机名列表 |
 | `command` | string | ✅ | 要在每台主机上执行的命令 |
-| `timeout_ms` | number | | 每台主机超时毫秒数（默认 120000） |
+| `timeout_ms` | number | | 每台主机超时毫秒数（默认 600000 = 10 分钟） |
 | `max_lines` | integer | | 每台主机最大返回行数（默认 200，0=不限制） |
 | `concurrency` | integer | | 最大并发连接数（默认 5，0=不限制） |
 

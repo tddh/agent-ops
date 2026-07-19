@@ -1,5 +1,5 @@
 //! RMUX protocol layer: connects to a local RMUX daemon over a Unix socket
-//! and translates JSON requests into RMUX SDK calls. Handles all 35 tool
+//! and translates JSON requests into RMUX SDK calls. Handles all 55 tool
 //! message types plus pane output streaming.
 
 use anyhow::Result;
@@ -68,10 +68,7 @@ impl ProtocolProxy {
 
         lines
             .into_iter()
-            .filter(|l| {
-                let t = l.trim();
-                !t.is_empty() && !(t.starts_with("root@") && (t.contains('#') || t.contains('$')))
-            })
+            .filter(|l| !l.trim().is_empty())
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -112,10 +109,11 @@ mod tests {
     }
 
     #[test]
-    fn test_clean_text_strips_prompt() {
+    fn test_clean_text_keeps_prompt_lines() {
         let input = "root@host:~# ls\nfile1\nfile2";
         let cleaned = ProtocolProxy::clean_text(input, None);
-        assert!(!cleaned.contains("root@"));
+        // prompt lines are no longer stripped — exec returns full terminal context
+        assert!(cleaned.contains("root@"));
         assert!(cleaned.contains("file1"));
         assert!(cleaned.contains("file2"));
     }

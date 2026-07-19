@@ -71,8 +71,8 @@ graph LR
     C <-->|Unix Socket| D[RMUX daemon<br/>基于 rmux]
 ```
 
-- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 62 个终端控制工具 + 操作审计 CLI
-- **agent-ops-cli** — 命令行工具，人可以直接 PTY 透传 attach 到远程 rmux 会话（`agent-ops-cli connect`），支持 vim/htop/TUI
+- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 63 个终端控制工具 + 操作审计 CLI
+- **agent-ops-cli** — 命令行工具，人可以直接 PTY 透传 attach 到远程 rmux 会话（`agent-ops-cli connect`），内置 AI 对话面板（Ctrl+G）支持 SSE 实时流式输出，支持 vim/htop/TUI
 - **rmux-bridge** — 部署在每台目标 Linux 主机上的 QUIC 加密代理，将 JSON 请求翻译为 RMUX daemon 调用
 - **RMUX daemon** — 每台 Linux 主机上的终端多路复用器（基于 rmux）
 
@@ -80,8 +80,8 @@ graph LR
 
 | 组件              | 运行位置                        | 依赖                                                             |
 | --------------- | --------------------------- | -------------------------------------------------------------- |
-| `agent-ops-mcp` | AI 客户端（macOS/Linux/Windows） | 无 — 单个二进制即可                                                    |
-| `agent-ops-cli` | 运维人员机器（macOS/Linux）        | 无 — 单个二进制即可                                                    |
+| `agent-ops-mcp` | AI 客户端（macOS/Linux/Windows） | 编译后二进制（运行需 `hosts.yaml` + CA 证书） |
+| `agent-ops-cli` | 运维人员机器（macOS/Linux）        | 编译后二进制（运行需 `hosts.yaml` + CA 证书） |
 | `rmux-bridge`   | 每台目标 Linux 主机               | **RMUX daemon**（`curl -fsSL https://rmux.io/install.sh \| sh`） |
 | RMUX daemon     | 每台目标 Linux 主机               | rmux（需要安装）                                                     |
 
@@ -91,16 +91,34 @@ graph LR
 
 | 能力          | 说明                                                                         |
 | ----------- | -------------------------------------------------------------------------- |
-| **交互式终端直连** | `agent-ops-cli connect` CLI 命令，PTY 透传至远程 rmux 会话，支持 vim/htop 等 TUI 程序 |
+| **交互式终端直连** | `agent-ops-cli connect` CLI 命令，PTY 透传至远程 rmux 会话 + 内置 AI 对话面板（Ctrl+G），SSE 实时流式输出，支持 vim/htop 等 TUI 程序 |
 | **交互式会话管理** | 创建/销毁/列举会话，多窗格分屏，窗口布局                                                      |
-| **命令执行**    | `exec` 一站式执行（sentinel 检测 + exit code 提取），支持交互式程序（send_keys + capture_pane） |
+| **命令执行**    | `exec` 一站式执行（sentinel 检测 + exit code 提取，scrollback 全量捕获大输出，断连自动重连恢复），支持交互式程序（send_keys + capture_pane） |
 | **输出等待**    | `wait_for_text` 等待终端出现指定文本，`wait_exit` 等待进程退出                              |
 | **文件传输**    | QUIC 通道上传/下载，支持目录递归上传和下载 + 并发                                              |
 | **端口转发**    | 通过 QUIC 隧道访问远程内网服务（数据库、API 等）                                              |
 | **多主机编排**   | 主机注册表 + 分组/标签/模式过滤，broadcast_keys 多窗格广播                                    |
 | **操作审计**    | SQLite 审计日志，每次工具调用自动记录，支持 CLI 查询/统计/清理                                     |
-| **终端状态感知**  | `capture_pane`、`exec`、`wait_for_text`、`wait_stable`、`pane_info` 返回 `terminal_state`（ready/running/editor/pager/password/...）和光标位置，让 AI Agent 理解终端当前状态 |
+| **终端状态感知**  | `capture_pane`、`exec`、`wait_for_text`、`wait_stable`、`pane_info` 返回 `terminal_state`（ready/running/editor/pager/password/confirm/repl/unknown）和光标位置，让 AI Agent 理解终端当前状态 |
 | **exec 安全检查** | `exec` 在终端非 `ready` 状态时拒绝执行（如在 vim、less、密码提示中），返回 `refused: true` 并给出操作建议，防止命令注入到非 shell 上下文 |
+
+### AI 对话面板快捷键
+
+在 AI 面板中（通过 `Ctrl+G` 激活）：
+
+| 按键 | 操作 |
+|------|------|
+| `Ctrl+G` / `Esc` | 关闭 AI 面板，返回终端 |
+| `Enter` | 发送消息 |
+| `Backspace` | 删除上一个字符 |
+| `↑` / `PageUp` | 向上滚动消息历史（更早的消息） |
+| `↓` / `PageDown` | 向下滚动消息历史（更新的消息） |
+| `鼠标滚轮` | 滚动消息历史 |
+
+| 命令 | 操作 |
+|------|------|
+| `@analyze` | 分析当前终端内容 |
+| `@clear` | 清空对话历史 |
 
 ## 快速开始
 
@@ -111,7 +129,7 @@ graph LR
 cargo build -p agent-ops-mcp --release
 cargo build -p agent-ops-cli --release
 
-# 交叉编译 bridge（Linux x86_64，静态链接）
+# 交叉编译 bridge + MCP server（Linux x86_64，静态链接）
 just release-linux
 ```
 
@@ -154,8 +172,8 @@ hosts:
       "type": "local",
       "command": ["/path/to/agent-ops-mcp"],
       "args": [
-        "--hosts-file", "/path/to/hosts.yaml",
-        "--ca-cert", "/path/to/ca.crt"
+        "--ca-cert", "/path/to/ca.crt",
+        "--hosts-file", "/path/to/hosts.yaml"
       ],
       "enabled": true
     }
@@ -167,10 +185,9 @@ hosts:
 
 ## 安全
 
-| 模式 | 触发条件 | 安全等级 |
-|------|---------|:---:|
-| CA 验证 | `--ca-cert /path/to/ca.crt` | ✅ 验证服务器身份，防中间人 |
-| 拒绝连接 | 未提供 CA | 🔒 默认行为 |
+| 模式 | 说明 |
+|------|------|
+| CA 验证（必填） | `--ca-cert` 为必填参数。始终通过 CA 根证书验证服务器身份，防中间人攻击。未提供则 MCP 服务器无法启动。 |
 
 **生产环境建议**：自建 CA，为每台 bridge 签发证书，MCP server 只持有 CA 根证书。
 
@@ -270,7 +287,7 @@ echo "$(cat)" >> knowledge.jsonl && git commit -am "新增排障经验条目"
 
 ## 工具列表
 
-共 62 个 MCP 工具，覆盖完整终端生命周期；另有 `audit query/stats/cleanup` CLI 子命令供人类直接查询审计日志：
+共 63 个 MCP 工具，覆盖完整终端生命周期；另有 `audit query/stats/cleanup` CLI 子命令供人类直接查询审计日志：
 
 | 类别 | 工具 |
 |------|------|
@@ -287,6 +304,7 @@ echo "$(cat)" >> knowledge.jsonl && git commit -am "新增排障经验条目"
 | 批量操作 | `batch_exec`, `batch_upload`, `batch_download` |
 | 端口转发 | `tunnel_create`, `tunnel_list`, `tunnel_close` |
 | 部署升级 | `deploy_bridge` |
+| 系统 | `agent_ops_usage_rules` |
 
 > 💡 `stream_pane` 适用于长命令实时输出监控（阻塞读，增量返回），替代 capture_pane 轮询。
 
@@ -304,7 +322,7 @@ just build       # cargo build --workspace
 
 ## 技术栈
 
-- **语言**：Rust 1.85+（edition 2021）
+- **语言**：Rust stable（edition 2021）
 - **异步运行时**：tokio
 - **TLS**：rustls（无 openssl 依赖）
 - **终端多路复用**：rmux-sdk
@@ -313,7 +331,7 @@ just build       # cargo build --workspace
 
 ## 文档
 
-- [工具文档](docs/TOOLS.md) — 62 个 MCP 工具的完整参数与返回值
+- [工具文档](docs/TOOLS.md) — 63 个 MCP 工具的完整参数与返回值
 - [部署文档](docs/DEPLOY.md) — 架构、构建、部署、运维、安全
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)
