@@ -18,15 +18,9 @@ The three layers: **Protocol layer** (MCP standard interface for AI clients + CL
 
 ### Where does it fit?
 
-agent-ops is not a replacement for SSH or Ansible — it's the **orchestration layer** that gives AI agents and humans a unified interface to operate remote Linux hosts:
+agent-ops provides **secure, reliable, auditable remote access to Linux hosts** — terminal sessions, file transfer, and port forwarding. It's not a replacement for SSH (transport layer), Ansible (configuration management), or tmux (terminal multiplexer). It's a new category: a **remote operations platform** that turns terminal sessions into programmable resources for both AI agents and humans.
 
-| Layer | Role | Tool |
-|-------|------|------|
-| **Orchestration** | AI + human decision, terminal access, file round-trip, cross-host context | agent-ops (MCP + CLI) |
-| **Execution** | Declarative, idempotent, repeatable automation | Ansible (or raw shell) |
-| **Transport** | Encrypted, reliable, persistent connection | agent-ops (QUIC) |
-
-agent-ops doesn't care what runs inside the terminal — raw shell commands, Ansible playbooks, build scripts, or interactive debugging. It provides the **persistent session + audit trail + multi-host orchestration**, and you bring the tools.
+agent-ops doesn't care what runs inside the terminal — raw shell commands, Ansible playbooks, build scripts, or interactive debugging. It provides the **persistent session + audit trail + multi-host operations**, and you bring the tools.
 
 **A few patterns:**
 
@@ -46,18 +40,19 @@ Human (via CLI PTY passthrough)
   AI Agent (via MCP)
   → exec: nginx -t && systemctl reload nginx  # AI validates & applies
 
-# Pattern 3: Human or AI delegates to Ansible for complex workflows
-AI/Human (via MCP or CLI)
-  → exec: git clone ansible-playbook-repo
-  → exec: ansible-playbook -i inventory deploy.yml
-  → audit trail: who ran which playbook, when, on which hosts
+# Pattern 3: Multi-host batch operations
+AI (via MCP)
+  → host_filter tags=["web"]                     # select target hosts
+  → batch_exec: systemctl status nginx            # check all web servers
+  → batch_upload: nginx.conf → /etc/nginx/        # push config to all
+  → batch_exec: nginx -s reload                   # reload all at once
 ```
 
 **Use cases:**
 - **Incident response**: AI or human jumps into a live session, reads system state, diagnoses root cause, and executes repairs — all within the same persistent terminal
 - **Ad-hoc operations**: Quick one-off commands across multiple hosts (`batch_exec`), file transfers, port forwarding — no Playbook needed
 - **Interactive debugging**: Persistent sessions for builds, long-running task monitoring, or interactive troubleshooting via both MCP (AI) and CLI PTY passthrough (human)
-- **Delegated automation**: Use agent-ops to invoke Ansible, Terraform, or any CLI tool — agent-ops provides the secure tunnel and audit trail, the tool provides the logic
+- **Remote development**: `agent-ops-cli connect devbox` — work on a remote machine with your familiar terminal environment, with AI assistance one keystroke away (Ctrl+G)
 - **Compliance auditing**: Full-chain audit trail covering both AI and human operations on every host, queryable via `agent-ops-mcp audit query`
 
 ## Architecture
