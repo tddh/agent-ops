@@ -4,8 +4,8 @@ use opencode::{create_opencode_client, OpencodeClient, OpencodeClientConfig, Req
 use serde_json::json;
 use std::sync::OnceLock;
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tokio::process::Child;
+use tokio::sync::Mutex;
 
 use crate::tui::ai_panel::{AiPanel, QuestionInfo};
 
@@ -22,7 +22,11 @@ fn session_cell() -> &'static Mutex<Option<String>> {
 // ── opencode serve 生命周期 ──
 
 async fn ensure_serve_impl(force: bool) -> Result<()> {
-    if !force && tokio::net::TcpStream::connect(("127.0.0.1", SERVE_PORT)).await.is_ok() {
+    if !force
+        && tokio::net::TcpStream::connect(("127.0.0.1", SERVE_PORT))
+            .await
+            .is_ok()
+    {
         return Ok(());
     }
 
@@ -43,7 +47,10 @@ async fn ensure_serve_impl(force: bool) -> Result<()> {
 
     for _ in 0..20 {
         tokio::time::sleep(Duration::from_millis(500)).await;
-        if tokio::net::TcpStream::connect(("127.0.0.1", SERVE_PORT)).await.is_ok() {
+        if tokio::net::TcpStream::connect(("127.0.0.1", SERVE_PORT))
+            .await
+            .is_ok()
+        {
             tokio::time::sleep(Duration::from_secs(2)).await;
             return Ok(());
         }
@@ -80,8 +87,7 @@ async fn get_or_create_session(client: &OpencodeClient) -> Result<String> {
     }
 
     let response = client.session().create(RequestOptions::default()).await?;
-    let id = response
-        .data["id"]
+    let id = response.data["id"]
         .as_str()
         .context("session response missing id")?
         .to_string();
@@ -215,10 +221,9 @@ pub async fn ask_opencode(prompt: &str, ai_panel: &AiPanel) -> Result<String> {
                     if props["sessionID"].as_str().unwrap_or("") != sid {
                         continue;
                     }
-                    if let (Some(id), Some(t)) = (
-                        props["part"]["id"].as_str(),
-                        props["part"]["type"].as_str(),
-                    ) {
+                    if let (Some(id), Some(t)) =
+                        (props["part"]["id"].as_str(), props["part"]["type"].as_str())
+                    {
                         part_types.insert(id.to_string(), t.to_string());
                     }
                 }

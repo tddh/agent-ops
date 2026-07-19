@@ -178,11 +178,8 @@ impl ProtocolProxy {
         {
             Ok(snapshot) => {
                 let raw_text = snapshot.visible_text();
-                let state = detect_terminal_state(
-                    &raw_text,
-                    snapshot.cursor.col,
-                    snapshot.cursor.visible,
-                );
+                let state =
+                    detect_terminal_state(&raw_text, snapshot.cursor.col, snapshot.cursor.visible);
                 json!({
                     "ok": true,
                     "found": true,

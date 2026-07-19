@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use std::os::unix::io::AsRawFd;
 
-use anyhow::Result;
 use agent_ops_core::HostConfig;
+use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::ExecutableCommand;
@@ -20,8 +20,8 @@ use tokio::sync::Mutex;
 
 use crate::connect::{connect_to_bridge_quic, translate_key_to_bytes};
 use crate::protocol::{
-    recv_json_frame, send_json_frame, write_attach_request, write_detach, write_resize,
-    read_attached_response,
+    read_attached_response, recv_json_frame, send_json_frame, write_attach_request, write_detach,
+    write_resize,
 };
 
 use self::ai_panel::{AiPanel, Message, Role};
@@ -64,7 +64,10 @@ async fn handle_report(
     let ctx = capture_pane(json_send, json_recv, session_name, "%0", 50).await?;
     *ai_panel.thinking.lock().await = true;
 
-    let prompt = format!("Analyze this terminal output and provide insights:\n```\n{}\n```", ctx);
+    let prompt = format!(
+        "Analyze this terminal output and provide insights:\n```\n{}\n```",
+        ctx
+    );
     let ai = ai_panel.clone();
     tokio::spawn(async move {
         if let Err(e) = crate::ai::ask_opencode(&prompt, &ai).await {
@@ -147,13 +150,19 @@ async fn ai_loop(
                     KeyCode::Esc => {
                         stdout.execute(crossterm::terminal::LeaveAlternateScreen)?;
                         stdout.execute(crossterm::event::DisableMouseCapture)?;
-                        unsafe { libc::dup2(saved_stderr, 2); libc::close(saved_stderr); }
+                        unsafe {
+                            libc::dup2(saved_stderr, 2);
+                            libc::close(saved_stderr);
+                        }
                         return Ok(());
                     }
                     KeyCode::Char('g') if ctrl => {
                         stdout.execute(crossterm::terminal::LeaveAlternateScreen)?;
                         stdout.execute(crossterm::event::DisableMouseCapture)?;
-                        unsafe { libc::dup2(saved_stderr, 2); libc::close(saved_stderr); }
+                        unsafe {
+                            libc::dup2(saved_stderr, 2);
+                            libc::close(saved_stderr);
+                        }
                         return Ok(());
                     }
                     KeyCode::Enter => {
@@ -171,9 +180,7 @@ async fn ai_loop(
                             if ai_panel.pending_question().await.is_some() {
                                 let a = ai_panel.clone();
                                 tokio::spawn(async move {
-                                    if let Err(e) =
-                                        crate::ai::answer_question(&a, &cmd).await
-                                    {
+                                    if let Err(e) = crate::ai::answer_question(&a, &cmd).await {
                                         a.add_message(Message {
                                             role: Role::System,
                                             content: format!("回复失败: {}", e),
@@ -336,14 +343,7 @@ pub async fn run_connect_with_ai(
         let event_opt = if is_ai_mode.load(Ordering::Relaxed) {
             // AI mode — enter alternate screen
             tokio::io::stdout().flush().await.ok();
-            let result = ai_loop(
-                &json_send,
-                &json_recv,
-                &pty_buffer,
-                &ai,
-                session_name,
-            )
-            .await;
+            let result = ai_loop(&json_send, &json_recv, &pty_buffer, &ai, session_name).await;
             is_ai_mode.store(false, Ordering::Relaxed);
             if result.is_err() {
                 break;

@@ -159,10 +159,7 @@ impl AiPanel {
         }
 
         if is_focused {
-            let has_question = self
-                .pending_question
-                .try_lock()
-                .is_ok_and(|q| q.is_some());
+            let has_question = self.pending_question.try_lock().is_ok_and(|q| q.is_some());
             if has_question {
                 lines.push(Line::from(Span::styled(
                     "输入回答后按 Enter →",

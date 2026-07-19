@@ -88,13 +88,14 @@ async fn main() -> anyhow::Result<()> {
     {
         let sig_router = Arc::clone(&router);
         tokio::spawn(async move {
-            let mut sig = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!("SIGHUP handler not available: {e}");
-                    return;
-                }
-            };
+            let mut sig =
+                match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!("SIGHUP handler not available: {e}");
+                        return;
+                    }
+                };
             loop {
                 sig.recv().await;
                 match sig_router.reload() {

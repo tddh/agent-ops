@@ -200,7 +200,8 @@ const PROBE_WINDOW: i64 = 20;
 const SCROLLBACK_CAP: i64 = 50000;
 
 /// 命令发出后的状态：marker 与计时信息，用于断连重连后继续等待 sentinel。
-struct SentCommand {    precheck_state: Option<serde_json::Value>,
+struct SentCommand {
+    precheck_state: Option<serde_json::Value>,
     start_marker: String,
     sentinel_marker: String,
     timeout_ms: u64,
@@ -412,7 +413,9 @@ where
                 duration_ms: sent.started_at.elapsed().as_millis() as u64,
                 error: Some(format!(
                     "wait_for_text: {}",
-                    wait_resp["error"].as_str().unwrap_or("unknown bridge error")
+                    wait_resp["error"]
+                        .as_str()
+                        .unwrap_or("unknown bridge error")
                 )),
                 terminal_state: None,
                 cursor: None,
@@ -627,8 +630,7 @@ where
     match exec_send(stream, session_name, pane_id, command, timeout_ms).await {
         SendOutcome::Done(r) => r,
         SendOutcome::Sent(sent) => {
-            match exec_await_once(stream, session_name, pane_id, &sent, max_lines).await
-            {
+            match exec_await_once(stream, session_name, pane_id, &sent, max_lines).await {
                 AwaitOutcome::Done(r) => r,
                 AwaitOutcome::Lost => ExecResult {
                     ok: false,
@@ -686,9 +688,7 @@ pub(crate) async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
         SendOutcome::Sent(sent) => {
             let deadline = sent.started_at + std::time::Duration::from_millis(timeout_ms);
             'outer: loop {
-                match exec_await_once(&mut tls, session_name, pane_id, &sent, max_lines)
-                    .await
-                {
+                match exec_await_once(&mut tls, session_name, pane_id, &sent, max_lines).await {
                     AwaitOutcome::Done(r) => break 'outer r,
                     AwaitOutcome::Lost => {
                         // sentinel 是远端 pane 上的持久状态，断连不影响命令执行；
@@ -719,8 +719,7 @@ pub(crate) async fn exec(ctx: &ToolContext, args: Value) -> Result<Value> {
                                     break;
                                 }
                                 Err(_) => {
-                                    backoff =
-                                        (backoff * 2).min(std::time::Duration::from_secs(5));
+                                    backoff = (backoff * 2).min(std::time::Duration::from_secs(5));
                                 }
                             }
                         }
