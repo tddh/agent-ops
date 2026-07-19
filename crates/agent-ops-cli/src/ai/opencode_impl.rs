@@ -13,6 +13,7 @@ use crate::tui::ai_panel::{AiPanel, QuestionInfo};
 
 static SESSION_ID: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static SERVE_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+static OPENCODE_DIR: OnceLock<String> = OnceLock::new();
 const SERVE_PORT: u16 = 14096;
 
 fn session_cell() -> &'static Mutex<Option<String>> {
@@ -20,6 +21,19 @@ fn session_cell() -> &'static Mutex<Option<String>> {
 }
 
 // ── opencode serve 生命周期 ──
+
+pub fn init_opencode_dir(dir: &str) {
+    OPENCODE_DIR.get_or_init(|| dir.to_string());
+}
+
+pub async fn kill_serve() {
+    let child_cell = SERVE_CHILD.get();
+    if let Some(cell) = child_cell {
+        if let Some(ref mut child) = *cell.lock().await {
+            let _ = child.kill().await;
+        }
+    }
+}
 
 async fn ensure_serve_impl(force: bool) -> Result<()> {
     if !force
@@ -35,13 +49,15 @@ async fn ensure_serve_impl(force: bool) -> Result<()> {
         child.kill().await.ok();
     }
 
-    let child = tokio::process::Command::new("opencode")
-        .args(["serve", "--port", &SERVE_PORT.to_string()])
+    let dir = OPENCODE_DIR.get_or_init(|| String::from(".")).clone();
+
+    let mut cmd = tokio::process::Command::new("opencode");
+    cmd.args(["serve", "--port", &SERVE_PORT.to_string()])
+        .current_dir(&dir)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .context("failed to start opencode serve")?;
+        .kill_on_drop(true);
+    let child = cmd.spawn().context("failed to start opencode serve")?;
 
     *child_cell.lock().await = Some(child);
 

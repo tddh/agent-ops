@@ -32,11 +32,23 @@ enum Commands {
 
         #[arg(long)]
         readonly: bool,
+
+        #[arg(long, default_value = ".")]
+        opencode_dir: String,
     },
 
     List {
         host: String,
     },
+}
+
+fn expand_tilde(path: &str) -> String {
+    if path.starts_with("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return home + &path[1..];
+        }
+    }
+    path.to_string()
 }
 
 fn load_host_config(
@@ -59,25 +71,38 @@ async fn main() -> anyhow::Result<()> {
         .with_max_level(tracing::Level::WARN)
         .with_writer(std::io::stderr)
         .init();
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    cli.hosts_file = expand_tilde(&cli.hosts_file);
+    cli.ca_cert = expand_tilde(&cli.ca_cert);
 
-    match cli.command {
+    let result = match cli.command {
         Commands::Connect {
             host,
             session,
             pane,
             readonly,
+            opencode_dir,
         } => {
             let config = load_host_config(&cli.hosts_file, &host)?;
             let pane = match pane {
                 Some(p) => p,
                 None => connect::find_lowest_pane(&config, &cli.ca_cert, &session).await?,
             };
-            crate::tui::run_connect_with_ai(&config, &cli.ca_cert, &session, &pane, readonly).await
+            crate::tui::run_connect_with_ai(
+                &config,
+                &cli.ca_cert,
+                &session,
+                &pane,
+                readonly,
+                &opencode_dir,
+            )
+            .await
         }
         Commands::List { host } => {
             let config = load_host_config(&cli.hosts_file, &host)?;
             connect::list_sessions(&config, &cli.ca_cert).await
         }
-    }
+    };
+    crate::ai::kill_serve().await;
+    result
 }

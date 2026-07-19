@@ -1,8 +1,8 @@
 # `agent-ops-cli connect` 交互式终端连接设计方案
 
-> **版本**: v1.1 | **日期**: 2026-07-18 | **状态**: 已实现
+> **版本**: v1.2 | **日期**: 2026-07-19 | **状态**: 已实现
 >
-> PTY 透传（0x06/0x07 协议）已完整实现。同时新增 AI 对话面板（ratatui 交替屏 + SSE 流式输出），通过 opencode SDK `session.prompt()` 纯管道模式驱动 Sisyphus agent，agent 通过 agent-ops MCP 工具操作远程终端。
+> PTY 透传（0x06/0x07 协议）已完整实现。同时新增 AI 对话面板（ratatui 交替屏 + SSE 流式输出），通过 opencode SDK `session.prompt()` 纯管道模式驱动 Sisyphus agent，agent 通过 agent-ops MCP 工具操作远程终端。已支持 SGR 鼠标协议（滚轮/触摸板翻页）。
 
 ---
 
@@ -1425,7 +1425,56 @@ hosts:
 
 ---
 
-## 九、分阶段实施计划
+## 九、PTY 鼠标支持
+
+### 9.1 问题
+
+`agent-ops-cli connect` 后通过 `rmux a -t` 附加会话时，鼠标滚轮和触摸板翻页不工作。
+
+**原因**：
+1. crossterm 的 `enable_raw_mode()` 只捕获键盘事件，需额外 `EnableMouseCapture` 才能收到 `Event::Mouse`
+2. PTY 事件循环中 `Event::Mouse` 被 `_ => {}` 丢弃，没有转发到远端
+
+### 9.2 实现
+
+**本地侧**（`tui/mod.rs`）：
+- 连接建立后调用 `EnableMouseCapture` 让 crossterm 报告鼠标事件
+- 新增 `translate_mouse_event()` 函数，将 crossterm 的 `MouseEvent` 转换为 SGR 协议 escape 序列
+- PTY 事件循环新增 `Event::Mouse` 分支，翻译后写入 `pty_send`
+- AI 面板退出返回 PTY 模式时重新 `EnableMouseCapture`
+
+**远端侧**：
+- 连接建立后向 PTY 发送 `\x1b[?1000h\x1b[?1006h` 启用 SGR 鼠标协议
+- 退出清理时发送 `\x1b[?1006l\x1b[?1000l` 禁用
+
+**SGR 编码格式**：`\x1b[<{button};{col};{row}{action}`
+- button: 0=左键, 1=中键, 2=右键, 32-34=拖拽, 64=上滚, 65=下滚
+- action: `M`=按下, `m`=释放
+
+---
+
+## 十、OpenCode Serve 生命周期
+
+### 10.1 设计
+
+AI 面板依赖 `opencode serve --port 14096` 作为后端：
+
+| 事件 | 行为 |
+|------|------|
+| 首次 AI 提问 | `ensure_serve()` 检测端口 14096 是否监听，未监听则 spawn `opencode serve` |
+| 后续提问 | 端口已监听 → 直接复用已有 serve 进程 |
+| 关闭 AI 面板（Esc/Ctrl+G） | **不杀** serve，保持运行以便下次快速复用 |
+| CLI 进程退出 | `main()` 末尾调用 `kill_serve()` 显式清理 |
+
+### 10.2 工作目录
+
+通过 `--opencode-dir <path>` 参数控制 serve 的工作目录（默认当前目录 `.`）。底层使用 `tokio::process::Command::current_dir()` 设置。
+
+> **注意**：`kill_on_drop(true)` 对存储在 `static` 中的 `Child` handle 不生效（程序退出时 static drop 顺序不保证），因此必须在 `main()` 末尾显式 kill。
+
+---
+
+## 十一、分阶段实施计划
 
 ### Phase 1：基础连接（3-5 天）
 

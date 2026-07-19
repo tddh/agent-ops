@@ -9,7 +9,9 @@ use std::os::unix::io::AsRawFd;
 
 use agent_ops_core::HostConfig;
 use anyhow::Result;
-use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+use crossterm::event::{
+    Event, EventStream, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::ExecutableCommand;
 use futures::StreamExt;
@@ -254,13 +256,49 @@ async fn ai_loop(
 
 // ── PTY Mode (Main Screen — raw passthrough) ──
 
+// ── Mouse event translation (SGR protocol) ──
+
+fn translate_mouse_event(event: &crossterm::event::MouseEvent) -> Vec<u8> {
+    let (button, action) = match event.kind {
+        MouseEventKind::Down(btn) => match btn {
+            MouseButton::Left => (0, b'M'),
+            MouseButton::Middle => (1, b'M'),
+            MouseButton::Right => (2, b'M'),
+        },
+        MouseEventKind::Up(btn) => match btn {
+            MouseButton::Left => (0, b'm'),
+            MouseButton::Middle => (1, b'm'),
+            MouseButton::Right => (2, b'm'),
+        },
+        MouseEventKind::Drag(btn) => match btn {
+            MouseButton::Left => (32, b'M'),
+            MouseButton::Middle => (33, b'M'),
+            MouseButton::Right => (34, b'M'),
+        },
+        MouseEventKind::ScrollDown => (65, b'M'),
+        MouseEventKind::ScrollUp => (64, b'M'),
+        _ => return Vec::new(),
+    };
+    // SGR format: \x1b[<{button};{col};{row}{action}
+    format!(
+        "\x1b[<{};{};{}{}",
+        button,
+        event.column + 1,
+        event.row + 1,
+        action as char
+    )
+    .into_bytes()
+}
+
 pub async fn run_connect_with_ai(
     config: &HostConfig,
     ca_cert_path: &str,
     session_name: &str,
     pane_id: &str,
     readonly: bool,
+    opencode_dir: &str,
 ) -> Result<()> {
+    crate::ai::init_opencode_dir(opencode_dir);
     let conn =
         connect_to_bridge_quic(&config.bridge_addr, &config.bridge_token, ca_cert_path).await?;
 
@@ -284,6 +322,14 @@ pub async fn run_connect_with_ai(
     let (mut pty_send_raw, mut pty_recv_raw) = conn.open_bi().await?;
     pty_send_raw.write_all(&[0x07]).await?;
     let pty_send = Arc::new(Mutex::new(pty_send_raw));
+
+    // Enable SGR mouse tracking on remote terminal
+    {
+        let mut ps = pty_send.lock().await;
+        ps.write_all(b"\x1b[?1000h\x1b[?1006h").await?;
+    }
+    // Enable mouse capture on local terminal (for crossterm to report mouse events)
+    std::io::stdout().execute(crossterm::event::EnableMouseCapture)?;
 
     // AI panel (shared between modes)
     let ai = AiPanel::new();
@@ -348,7 +394,8 @@ pub async fn run_connect_with_ai(
             if result.is_err() {
                 break;
             }
-            // Back from AI mode — just continue in PTY mode
+            // Re-enable mouse capture when returning to PTY mode
+            std::io::stdout().execute(crossterm::event::EnableMouseCapture)?;
             continue;
         } else {
             match event_stream.next().await {
@@ -392,12 +439,30 @@ pub async fn run_connect_with_ai(
                     let mut cs = ctrl_send.lock().await;
                     write_resize(&mut cs, cols, rows).await.ok();
                 }
+                Event::Mouse(mouse) => {
+                    if readonly {
+                        continue;
+                    }
+                    let bytes = translate_mouse_event(&mouse);
+                    if !bytes.is_empty() {
+                        let mut s = pty_send.lock().await;
+                        if s.write_all(&bytes).await.is_err() {
+                            break;
+                        }
+                    }
+                }
                 _ => {}
             }
         }
     }
 
     // Cleanup
+    let _ = std::io::stdout().execute(crossterm::event::DisableMouseCapture);
+    // Disable SGR mouse tracking on remote
+    {
+        let mut ps = pty_send.lock().await;
+        let _ = ps.write_all(b"\x1b[?1006l\x1b[?1000l").await;
+    }
     disable_raw_mode()?;
     pty_reader.abort();
     write_detach(&mut *ctrl_send.lock().await).await.ok();

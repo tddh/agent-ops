@@ -120,6 +120,10 @@ Inside the AI panel (activated via `Ctrl+G`):
 | `@analyze` | Analyze current terminal content |
 | `@clear` | Clear conversation history |
 
+The AI panel starts an `opencode serve` process on first use (port 14096). It persists across panel open/close cycles and is cleaned up when the CLI exits. Use `--opencode-dir <path>` to control the working directory (default: current directory).
+
+PTY passthrough mode supports mouse scroll and trackpad gestures via SGR mouse protocol.
+
 ## Quick Start
 
 ### Build
