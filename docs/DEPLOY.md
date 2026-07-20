@@ -12,7 +12,7 @@
 └─────────────────┘            └──────────────┘ ════════════════════════╝ └──────────────────┘                └─────────┘
 ```
 
-- **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 62 个终端控制工具 + 操作审计 CLI
+- **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 63 个终端控制工具 + 操作审计 CLI
 - **agent-ops-cli**: 命令行工具，人可以直接 PTY 透传 attach 到远程 rmux 会话（`agent-ops-cli connect`）
 - **rmux-bridge**: 部署在每台目标 Linux 主机上，QUIC 加密代理 → RMUX daemon。终端操作与文件传输统一走 QUIC 协议（UDP :9778）
 - **RMUX daemon**: 每个 Linux 主机上的终端多路复用器
@@ -22,7 +22,7 @@
 | 组件 | 要求 |
 |------|------|
 | 目标主机 | Linux x86_64，systemd，有 SSH 访问 |
-| RMUX | `rmux` 0.8+ daemon 已安装并运行（`curl -fsSL https://rmux.io/install.sh \| sh`） |
+| RMUX | `rmux` 0.9+ daemon 已安装并运行（`curl -fsSL https://rmux.io/install.sh \| sh`） |
 | 构建机 | Rust 1.85+，`x86_64-linux-musl-gcc`（交叉编译用 `brew install FiloSottile/musl-cross/musl-cross`） |
 | 端口 | bridge 监听 9778（QUIC/UDP） |
 | 证书 | 自签名 TLS 证书（`openssl` 即可） |
@@ -63,6 +63,7 @@ bash deploy/install-daemon.sh root@<your-bridge-ip>
 做的事：
 - 安装 rmux（如未安装）
 - 上传项目定制的 `rmux-daemon.service`（配置 `RMUX_TMPDIR=%h/.rmux`）
+- 上传项目定制的 `rmux.conf` 到 `/root/.rmux.conf`（启用鼠标、调大回滚缓冲区、**开启 `allow-passthrough`**——rmux 0.9 默认为 `off`，不开启会导致 CLI 连接后按键无效）
 - 启动 daemon
 - 写入 `/etc/profile.d/agent-ops.sh`（`export RMUX_TMPDIR=$HOME/.rmux`），用户登录后可直接 `rmux a -t agent-ops`
 
@@ -282,6 +283,7 @@ agent-ops-mcp audit cleanup --older-than 30
 
 | 症状 | 检查 |
 |------|------|
+| CLI `connect` 后按键无效、终端卡死 | rmux 0.9 将 `allow-passthrough` 默认改为 `off`。检查 `/root/.rmux.conf` 中是否有 `set -g allow-passthrough on`，然后 `systemctl restart rmux-daemon`。项目已提供默认配置 `config/rmux.conf`。 |
 | MCP 工具返回 `connection refused` | `systemctl status rmux-bridge`，确认 bridge 在运行 |
 | `authentication failed` | 检查 `bridge.env` 中的 `BRIDGE_AUTH_TOKEN` 与 `hosts.yaml` 中 `bridge_token` 是否一致 |
 | TLS 握手失败 | `--ca-cert` 指向的证书是否与 bridge 端一致 |

@@ -19,7 +19,7 @@ release-linux:
 
 # 交叉编译 Windows x86_64（MCP 客户端）
 release-windows:
-    cargo build --target x86_64-pc-windows-msvc --release -p agent-ops-mcp
+    cargo build --target x86_64-pc-windows-msvc --release -p agent-ops-mcp -p agent-ops-cli
 
 check-bridge:
     cargo check -p rmux-bridge

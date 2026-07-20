@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.1] — 2026-07-20
+
+### Changed
+- **升级 rmux-sdk 0.8→0.9**：wire v3→v5，需 daemon 0.9+ 配套
+
+### Fixed
+- **CLI 连接后按键无效**：rmux 0.9 将 `allow-passthrough` 默认改为 `off`，bridge PTY attach 时按键被 daemon 拦截。新增 `config/rmux.conf` 模板，部署时写入 `set -g allow-passthrough on`
+- **Windows CLI 编译**：`#[cfg(unix)]` 条件编译包裹 AI 面板的 stderr 抑制逻辑
+
+### Added
+- `config/rmux.conf` daemon 配置模板（mouse、history-limit、allow-passthrough）
+- Release 包包含 `rmux.conf`
+
 ## [0.3.0] — 2026-07-15
 
 ### Changed

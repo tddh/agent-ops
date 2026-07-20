@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 
 use agent_ops_core::HostConfig;
@@ -115,8 +116,11 @@ async fn ai_loop(
 
     // Suppress stderr during AI panel to prevent SDK internal logs from
     // bleeding into the alternate screen TUI.
+    #[cfg(unix)]
     let saved_stderr = unsafe { libc::dup(2) };
+    #[cfg(unix)]
     let null = std::fs::OpenOptions::new().write(true).open("/dev/null")?;
+    #[cfg(unix)]
     unsafe { libc::dup2(null.as_raw_fd(), 2) };
 
     let backend = CrosstermBackend::new(std::io::stdout());
@@ -152,6 +156,7 @@ async fn ai_loop(
                     KeyCode::Esc => {
                         stdout.execute(crossterm::terminal::LeaveAlternateScreen)?;
                         stdout.execute(crossterm::event::DisableMouseCapture)?;
+                        #[cfg(unix)]
                         unsafe {
                             libc::dup2(saved_stderr, 2);
                             libc::close(saved_stderr);
@@ -161,6 +166,7 @@ async fn ai_loop(
                     KeyCode::Char('g') if ctrl => {
                         stdout.execute(crossterm::terminal::LeaveAlternateScreen)?;
                         stdout.execute(crossterm::event::DisableMouseCapture)?;
+                        #[cfg(unix)]
                         unsafe {
                             libc::dup2(saved_stderr, 2);
                             libc::close(saved_stderr);

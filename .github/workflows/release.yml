@@ -21,7 +21,7 @@ jobs:
         run: |
           mkdir -p pkg/config pkg/.opencode/skills/agent-ops-mcp
           cp target/release/agent-ops-mcp target/release/agent-ops-cli pkg/
-          cp config/hosts.example.yaml config/mcp-config.example.json pkg/config/
+          cp config/hosts.example.yaml config/mcp-config.example.json config/rmux.conf pkg/config/
           cp .opencode/skills/agent-ops-mcp/SKILL.md pkg/.opencode/skills/agent-ops-mcp/
           cp README.md pkg/
           tar czf agent-ops-macos-arm64.tar.gz -C pkg .
@@ -47,7 +47,7 @@ jobs:
           cp target/x86_64-unknown-linux-musl/release/agent-ops-mcp pkg/
           cp target/x86_64-unknown-linux-musl/release/agent-ops-cli pkg/
           cp target/x86_64-unknown-linux-musl/release/rmux-bridge pkg/
-          cp config/hosts.example.yaml config/mcp-config.example.json pkg/config/
+          cp config/hosts.example.yaml config/mcp-config.example.json config/rmux.conf pkg/config/
           cp deploy/install-bridge.sh deploy/install-daemon.sh pkg/deploy/
           cp deploy/rmux-bridge.service deploy/rmux-daemon.service pkg/deploy/
           cp deploy/generate-certs.sh pkg/deploy/
@@ -72,7 +72,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path pkg/config, pkg/.opencode/skills/agent-ops-mcp
           Copy-Item target/release/agent-ops-mcp.exe, target/release/agent-ops-cli.exe pkg/
-          Copy-Item config/hosts.example.yaml, config/mcp-config.example.json pkg/config/
+          Copy-Item config/hosts.example.yaml, config/mcp-config.example.json, config/rmux.conf pkg/config/
           Copy-Item .opencode/skills/agent-ops-mcp/SKILL.md pkg/.opencode/skills/agent-ops-mcp/
           Copy-Item README.md pkg/
           Compress-Archive -Path pkg/* -DestinationPath agent-ops-windows-x86_64.zip
