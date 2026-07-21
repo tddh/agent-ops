@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.0] — 2026-07-20
+
+### Added
+- **AI 面板自动贴底滚动**：流式输出时视图自动跟随最新消息；向上翻页（↑/PageUp/滚轮）进入回看模式，翻回底部自动恢复跟随
+- **AI 思考动画标识**：静态 "AI thinking..." 替换为 braille 旋转动画 + 已等待秒数（如 `⠹ AI 思考中… 7s`）
 
 ### Fixed
 - **Ghostty 中 `connect` 后键盘卡死**（输出正常、输入无响应）：PTY 模式从 crossterm 事件解析改为**原始字节透传**。原"解析成事件再重新编码"的实现会吞掉远端等待的终端应答序列（如 `\x1b[?997;2n`），且 crossterm 解析器遇到 Ghostty 特有序列会停摆。现在 stdin 字节直接转发远端，仅拦截 `Ctrl+G`/`Ctrl+\`/`Ctrl+L` 控制字节，resize 改用 SIGWINCH；鼠标模式改由远端应用拥有，CLI 不再写鼠标序列、不再翻译鼠标事件。同步移除 `translate_mouse_event` 与 `keymap` 模块
@@ -18,6 +22,13 @@
 ### Added
 - `config/rmux.conf` daemon 配置模板（mouse、history-limit、allow-passthrough）
 - Release 包包含 `rmux.conf`
+
+## [0.4.0] — 2026-07-19
+
+### Added
+- **AI 对话面板**：`connect` 会话内按 `Ctrl+G` 唤起，基于 `opencode serve`（端口 14096），SSE 实时流式输出；支持 `@analyze`（分析当前终端内容）和 `@clear`（清空对话）；AI 可通过 question 机制向用户提问
+- **opencode serve 生命周期管理**：首次提问自动启动，面板关闭/重开不杀进程，CLI 退出自动清理；新增 `--opencode-dir` 指定 AI 工作目录
+- **PTY 透传鼠标支持**：SGR (1006) 编码转发鼠标滚轮与触摸板手势
 
 ## [0.3.0] — 2026-07-15
 

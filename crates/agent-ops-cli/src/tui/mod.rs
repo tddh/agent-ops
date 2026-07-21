@@ -76,7 +76,7 @@ async fn handle_report(
     ai_panel: &AiPanel,
 ) -> Result<()> {
     let ctx = capture_pane(json_send, json_recv, session_name, "%0", 50).await?;
-    *ai_panel.thinking.lock().await = true;
+    ai_panel.set_thinking(true).await;
 
     let prompt = format!(
         "Analyze this terminal output and provide insights:\n```\n{}\n```",
@@ -92,7 +92,7 @@ async fn handle_report(
             })
             .await;
         }
-        *ai.thinking.lock().await = false;
+        ai.set_thinking(false).await;
     });
 
     Ok(())
@@ -140,12 +140,16 @@ async fn ai_loop(
     let mut terminal = Terminal::new(backend)?;
 
     let mut event_stream = EventStream::new();
-    let mut msg_scroll: usize = 0;
+    // None = 贴底跟随（新内容自动可见）；Some(n) = 用户手动回看中
+    let mut msg_scroll: Option<usize> = None;
+    let mut max_scroll: usize = 0;
+    let mut tick: usize = 0;
 
     loop {
+        tick = tick.wrapping_add(1);
         // Redraw
         let draw_result = terminal.draw(|f| {
-            ai_panel.render(f, f.area(), true, msg_scroll);
+            max_scroll = ai_panel.render(f, f.area(), true, msg_scroll, tick);
         });
 
         if let Err(e) = draw_result {
@@ -225,7 +229,7 @@ async fn ai_loop(
                                         code_blocks: vec![],
                                     })
                                     .await;
-                                *ai_panel.thinking.lock().await = true;
+                                ai_panel.set_thinking(true).await;
 
                                 let a = ai_panel.clone();
                                 let task = cmd;
@@ -238,7 +242,7 @@ async fn ai_loop(
                                         })
                                         .await;
                                     }
-                                    *a.thinking.lock().await = false;
+                                    a.set_thinking(false).await;
                                 });
                             }
                         }
@@ -250,17 +254,27 @@ async fn ai_loop(
                         ai_panel.input.lock().await.pop();
                     }
                     KeyCode::PageUp | KeyCode::Up => {
-                        msg_scroll = msg_scroll.saturating_sub(3);
+                        let cur = msg_scroll.unwrap_or(max_scroll);
+                        msg_scroll = Some(cur.saturating_sub(3));
                     }
                     KeyCode::PageDown | KeyCode::Down => {
-                        msg_scroll = msg_scroll.saturating_add(3);
+                        let cur = msg_scroll.unwrap_or(max_scroll);
+                        let next = cur.saturating_add(3);
+                        msg_scroll = if next >= max_scroll { None } else { Some(next) };
                     }
                     _ => {}
                 }
             }
             Event::Mouse(mouse) => match mouse.kind {
-                MouseEventKind::ScrollDown => msg_scroll = msg_scroll.saturating_add(3),
-                MouseEventKind::ScrollUp => msg_scroll = msg_scroll.saturating_sub(3),
+                MouseEventKind::ScrollDown => {
+                    let cur = msg_scroll.unwrap_or(max_scroll);
+                    let next = cur.saturating_add(3);
+                    msg_scroll = if next >= max_scroll { None } else { Some(next) };
+                }
+                MouseEventKind::ScrollUp => {
+                    let cur = msg_scroll.unwrap_or(max_scroll);
+                    msg_scroll = Some(cur.saturating_sub(3));
+                }
                 _ => {}
             },
             Event::Resize(_, _) => {

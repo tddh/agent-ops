@@ -106,9 +106,11 @@ Inside the AI panel (activated via `Ctrl+G`):
 | `Ctrl+G` / `Esc` | Close AI panel, return to terminal |
 | `Enter` | Send message |
 | `Backspace` | Delete last character |
-| `↑` / `PageUp` | Scroll message history up (older messages) |
-| `↓` / `PageDown` | Scroll message history down (newer messages) |
+| `↑` / `PageUp` | Scroll message history up (older messages, exits follow mode) |
+| `↓` / `PageDown` | Scroll message history down (scrolling to the bottom resumes follow mode) |
 | `Mouse Scroll` | Scroll message history |
+
+The message view auto-scrolls to the latest output (follow mode) while the AI streams; scrolling up pauses it for reviewing history, and scrolling back to the bottom resumes it. While waiting for a response, an animated spinner with elapsed seconds is shown.
 
 | Command | Action |
 |---------|--------|

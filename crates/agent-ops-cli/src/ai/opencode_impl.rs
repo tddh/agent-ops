@@ -260,7 +260,7 @@ pub async fn ask_opencode(prompt: &str, ai_panel: &AiPanel) -> Result<String> {
                     }
                     let qid = props["questionID"].as_str().unwrap_or("").to_string();
                     let qtext = props["question"].as_str().unwrap_or("请回答").to_string();
-                    *panel.thinking.lock().await = false;
+                    panel.set_thinking(false).await;
                     panel
                         .append_streaming(&format!("\n[AI 提问] {}", qtext))
                         .await;

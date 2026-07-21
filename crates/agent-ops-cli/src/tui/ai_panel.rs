@@ -4,6 +4,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -33,7 +34,19 @@ pub struct AiPanel {
     pub messages: Arc<Mutex<Vec<Message>>>,
     pub input: Arc<Mutex<String>>,
     pub thinking: Arc<Mutex<bool>>,
+    thinking_since: Arc<Mutex<Option<Instant>>>,
     pub pending_question: Arc<Mutex<Option<QuestionInfo>>>,
+}
+
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// None = 贴底跟随；Some(s) 钳制在合法范围内。返回实际使用的纵向偏移。
+fn effective_scroll(scroll: Option<usize>, total_lines: usize, viewport: usize) -> usize {
+    let max_scroll = total_lines.saturating_sub(viewport);
+    match scroll {
+        Some(s) => s.min(max_scroll),
+        None => max_scroll,
+    }
 }
 
 impl AiPanel {
@@ -42,8 +55,14 @@ impl AiPanel {
             messages: Arc::new(Mutex::new(Vec::new())),
             input: Arc::new(Mutex::new(String::new())),
             thinking: Arc::new(Mutex::new(false)),
+            thinking_since: Arc::new(Mutex::new(None)),
             pending_question: Arc::new(Mutex::new(None)),
         }
+    }
+
+    pub async fn set_thinking(&self, v: bool) {
+        *self.thinking.lock().await = v;
+        *self.thinking_since.lock().await = if v { Some(Instant::now()) } else { None };
     }
 
     pub async fn pending_question(&self) -> Option<QuestionInfo> {
@@ -103,14 +122,22 @@ impl AiPanel {
         }
     }
 
-    pub fn render(&self, f: &mut Frame, area: Rect, is_focused: bool, scroll: usize) {
+    /// 返回 max_scroll（内容总行数 - 可视高度），供调用方管理跟随/手动滚动。
+    pub fn render(
+        &self,
+        f: &mut Frame,
+        area: Rect,
+        is_focused: bool,
+        scroll: Option<usize>,
+        tick: usize,
+    ) -> usize {
         let msgs = match self.messages.try_lock() {
             Ok(g) => g,
-            Err(_) => return,
+            Err(_) => return 0,
         };
         let input = match self.input.try_lock() {
             Ok(g) => g,
-            Err(_) => return,
+            Err(_) => return 0,
         };
         let thinking = match self.thinking.try_lock() {
             Ok(g) => *g,
@@ -145,8 +172,15 @@ impl AiPanel {
         }
 
         if thinking {
+            let elapsed = self
+                .thinking_since
+                .try_lock()
+                .ok()
+                .and_then(|t| *t)
+                .map(|i| i.elapsed().as_secs())
+                .unwrap_or(0);
             lines.push(Line::from(Span::styled(
-                "AI thinking...",
+                format!("{} AI 思考中… {}s", SPINNER[tick % SPINNER.len()], elapsed),
                 Style::default().fg(Color::Yellow),
             )));
         } else if let Ok(q) = self.pending_question.try_lock() {
@@ -180,9 +214,42 @@ impl AiPanel {
                 Style::default()
             });
 
+        let viewport = area.height.saturating_sub(1) as usize;
+        let max_scroll = lines.len().saturating_sub(viewport);
+        let scroll_y = effective_scroll(scroll, lines.len(), viewport);
+
         let p = Paragraph::new(Text::from(lines))
             .block(block)
-            .scroll((scroll as u16, 0));
+            .scroll((scroll_y as u16, 0));
         f.render_widget(p, area);
+        max_scroll
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::effective_scroll;
+
+    #[test]
+    fn none_follows_tail() {
+        assert_eq!(effective_scroll(None, 100, 20), 80);
+    }
+
+    #[test]
+    fn some_is_clamped_to_max() {
+        assert_eq!(effective_scroll(Some(95), 100, 20), 80);
+        assert_eq!(effective_scroll(Some(30), 100, 20), 30);
+    }
+
+    #[test]
+    fn no_scroll_when_content_fits() {
+        assert_eq!(effective_scroll(None, 10, 20), 0);
+        assert_eq!(effective_scroll(Some(5), 10, 20), 0);
+    }
+
+    #[test]
+    fn empty_content() {
+        assert_eq!(effective_scroll(None, 0, 20), 0);
+        assert_eq!(effective_scroll(None, 5, 0), 5);
     }
 }
