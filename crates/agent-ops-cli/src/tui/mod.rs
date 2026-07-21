@@ -30,6 +30,33 @@ use crate::protocol::{
 use self::ai_panel::{AiPanel, Message, Role};
 use self::keymap::Action;
 
+// 鼠标捕获序列：点击/拖动/滚轮 + SGR 编码。
+// 故意不包含 1003 (any-motion)：Ghostty 会把每次触摸板微动都上报为事件，
+// 键盘输入被排在事件洪流后面，最长数分钟才能被处理；
+// 也不包含 1015 (urxvt)：CLI 转发给远端用的是 SGR (1006) 编码。
+// MOUSE_ON 先关闭 1003/1015，治愈被旧版本残留的终端状态。
+const MOUSE_ON: &[u8] = b"\x1b[?1003l\x1b[?1015l\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+const MOUSE_OFF: &[u8] = b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1015l\x1b[?1006l";
+
+fn write_mouse(seq: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut out = std::io::stdout();
+    out.write_all(seq)?;
+    out.flush()
+}
+
+fn dbglog(msg: &str) {
+    use std::io::Write as _;
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/agent-ops-cli-debug.log")
+        .and_then(|mut f| writeln!(f, "[{}] {}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(), msg));
+}
+
 // ── Helper functions ──
 
 async fn capture_pane(
@@ -112,7 +139,7 @@ async fn ai_loop(
 ) -> Result<()> {
     let mut stdout = std::io::stdout();
     stdout.execute(crossterm::terminal::EnterAlternateScreen)?;
-    stdout.execute(crossterm::event::EnableMouseCapture)?;
+    write_mouse(MOUSE_ON)?;
 
     // Suppress stderr during AI panel to prevent SDK internal logs from
     // bleeding into the alternate screen TUI.
@@ -155,7 +182,7 @@ async fn ai_loop(
                 match key.code {
                     KeyCode::Esc => {
                         stdout.execute(crossterm::terminal::LeaveAlternateScreen)?;
-                        stdout.execute(crossterm::event::DisableMouseCapture)?;
+                        write_mouse(MOUSE_OFF)?;
                         #[cfg(unix)]
                         unsafe {
                             libc::dup2(saved_stderr, 2);
@@ -165,7 +192,7 @@ async fn ai_loop(
                     }
                     KeyCode::Char('g') if ctrl => {
                         stdout.execute(crossterm::terminal::LeaveAlternateScreen)?;
-                        stdout.execute(crossterm::event::DisableMouseCapture)?;
+                        write_mouse(MOUSE_OFF)?;
                         #[cfg(unix)]
                         unsafe {
                             libc::dup2(saved_stderr, 2);
@@ -329,13 +356,9 @@ pub async fn run_connect_with_ai(
     pty_send_raw.write_all(&[0x07]).await?;
     let pty_send = Arc::new(Mutex::new(pty_send_raw));
 
-    // Enable SGR mouse tracking on remote terminal
-    {
-        let mut ps = pty_send.lock().await;
-        ps.write_all(b"\x1b[?1000h\x1b[?1006h").await?;
-    }
-    // Enable mouse capture on local terminal (for crossterm to report mouse events)
-    std::io::stdout().execute(crossterm::event::EnableMouseCapture)?;
+    // 本地终端启用鼠标捕获（crossterm 上报鼠标事件用于转发）。
+    // 不向远程 PTY 写模式序列——那是发给远端的输入数据，会被 echo 成垃圾字符。
+    write_mouse(MOUSE_ON)?;
 
     // AI panel (shared between modes)
     let ai = AiPanel::new();
@@ -401,12 +424,25 @@ pub async fn run_connect_with_ai(
                 break;
             }
             // Re-enable mouse capture when returning to PTY mode
-            std::io::stdout().execute(crossterm::event::EnableMouseCapture)?;
+            write_mouse(MOUSE_ON)?;
             continue;
         } else {
+            dbglog("loop: wait event");
             match event_stream.next().await {
-                Some(Ok(event)) => Some(event),
-                _ => break,
+                Some(Ok(event)) => {
+                    let tag = match &event {
+                        Event::Key(k) => format!("key {:?}", k.code),
+                        Event::Mouse(_) => "mouse".to_string(),
+                        Event::Resize(c, r) => format!("resize {}x{}", c, r),
+                        _ => "other".to_string(),
+                    };
+                    dbglog(&format!("loop: GOT {}", tag));
+                    Some(event)
+                }
+                _ => {
+                    dbglog("loop: stream ended");
+                    break;
+                }
             }
         };
 
@@ -432,8 +468,12 @@ pub async fn run_connect_with_ai(
                             if !readonly {
                                 let bytes = translate_key_to_bytes(key);
                                 if !bytes.is_empty() {
+                                    dbglog(&format!("loop: forward {:?} ({}B), locking", key.code, bytes.len()));
                                     let mut s = pty_send.lock().await;
-                                    if s.write_all(&bytes).await.is_err() {
+                                    dbglog("loop: locked, writing");
+                                    let r = s.write_all(&bytes).await;
+                                    dbglog(&format!("loop: write done ok={}", r.is_ok()));
+                                    if r.is_err() {
                                         break;
                                     }
                                 }
@@ -463,12 +503,7 @@ pub async fn run_connect_with_ai(
     }
 
     // Cleanup
-    let _ = std::io::stdout().execute(crossterm::event::DisableMouseCapture);
-    // Disable SGR mouse tracking on remote
-    {
-        let mut ps = pty_send.lock().await;
-        let _ = ps.write_all(b"\x1b[?1006l\x1b[?1000l").await;
-    }
+    let _ = write_mouse(MOUSE_OFF);
     disable_raw_mode()?;
     pty_reader.abort();
     write_detach(&mut *ctrl_send.lock().await).await.ok();
