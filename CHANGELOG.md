@@ -1,10 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Fixed
-- **exec 成功路径不返回 `terminal_state`/`cursor`**：与文档承诺不符（只有拒绝路径才带）。`capture_window` 现在透传 bridge 返回的这两个字段，等待循环记录最后一次 capture 的值并随成功结果返回
-
 ## [0.5.0] — 2026-07-20
 
 ### Added
@@ -12,6 +7,7 @@
 - **AI 思考动画标识**：静态 "AI thinking..." 替换为 braille 旋转动画 + 已等待秒数（如 `⠹ AI 思考中… 7s`）
 
 ### Fixed
+- **exec 成功路径不返回 `terminal_state`/`cursor`**：与文档承诺不符（只有拒绝路径才带）。`capture_window` 现在透传 bridge 返回的这两个字段，等待循环记录最后一次 capture 的值并随成功结果返回
 - **Ghostty 中 `connect` 后键盘卡死**（输出正常、输入无响应）：PTY 模式从 crossterm 事件解析改为**原始字节透传**。原"解析成事件再重新编码"的实现会吞掉远端等待的终端应答序列（如 `\x1b[?997;2n`），且 crossterm 解析器遇到 Ghostty 特有序列会停摆。现在 stdin 字节直接转发远端，仅拦截 `Ctrl+G`/`Ctrl+\`/`Ctrl+L` 控制字节，resize 改用 SIGWINCH；鼠标模式改由远端应用拥有，CLI 不再写鼠标序列、不再翻译鼠标事件。同步移除 `translate_mouse_event` 与 `keymap` 模块
 - **opencode serve 抢占终端输入**：spawn 时补 `stdin(Stdio::null())`，避免子进程继承终端 stdin 与 CLI 抢输入
 
