@@ -182,7 +182,6 @@ async fn ai_loop(
                 match key.code {
                     KeyCode::Esc => {
                         stdout.execute(crossterm::terminal::LeaveAlternateScreen)?;
-                        write_mouse(MOUSE_OFF)?;
                         #[cfg(unix)]
                         unsafe {
                             libc::dup2(saved_stderr, 2);
@@ -192,7 +191,6 @@ async fn ai_loop(
                     }
                     KeyCode::Char('g') if ctrl => {
                         stdout.execute(crossterm::terminal::LeaveAlternateScreen)?;
-                        write_mouse(MOUSE_OFF)?;
                         #[cfg(unix)]
                         unsafe {
                             libc::dup2(saved_stderr, 2);
@@ -356,10 +354,6 @@ pub async fn run_connect_with_ai(
     pty_send_raw.write_all(&[0x07]).await?;
     let pty_send = Arc::new(Mutex::new(pty_send_raw));
 
-    // 本地终端启用鼠标捕获（crossterm 上报鼠标事件用于转发）。
-    // 不向远程 PTY 写模式序列——那是发给远端的输入数据，会被 echo 成垃圾字符。
-    write_mouse(MOUSE_ON)?;
-
     // AI panel (shared between modes)
     let ai = AiPanel::new();
     ai.add_message(Message {
@@ -423,8 +417,6 @@ pub async fn run_connect_with_ai(
             if result.is_err() {
                 break;
             }
-            // Re-enable mouse capture when returning to PTY mode
-            write_mouse(MOUSE_ON)?;
             continue;
         } else {
             dbglog("loop: wait event");
