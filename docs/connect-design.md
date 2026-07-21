@@ -1425,31 +1425,34 @@ hosts:
 
 ---
 
-## 九、PTY 鼠标支持
+## 九、PTY 输入透传与鼠标支持
 
-### 9.1 问题
+### 9.1 设计：真透传，不解析
 
-`agent-ops-cli connect` 后通过 `rmux a -t` 附加会话时，鼠标滚轮和触摸板翻页不工作。
+PTY 模式下 stdin **不经过 crossterm 事件解析**，原始字节直接转发给远端 PTY，只拦截三个本地控制字节：
 
-**原因**：
-1. crossterm 的 `enable_raw_mode()` 只捕获键盘事件，需额外 `EnableMouseCapture` 才能收到 `Event::Mouse`
-2. PTY 事件循环中 `Event::Mouse` 被 `_ => {}` 丢弃，没有转发到远端
+| 字节 | 按键 | 行为 |
+|------|------|------|
+| `0x07` | Ctrl+G | 打开 AI 面板 |
+| `0x1c` | Ctrl+\ | detach 断开 |
+| `0x0c` | Ctrl+L | 清空 AI 历史 |
 
-### 9.2 实现
+终端 resize 通过 SIGWINCH 信号（`tokio::signal::unix::SignalKind::window_change`）检测，经控制流（0x06）发送 Resize 消息。
 
-**本地侧**（`tui/mod.rs`）：
-- 连接建立后调用 `EnableMouseCapture` 让 crossterm 报告鼠标事件
-- 新增 `translate_mouse_event()` 函数，将 crossterm 的 `MouseEvent` 转换为 SGR 协议 escape 序列
-- PTY 事件循环新增 `Event::Mouse` 分支，翻译后写入 `pty_send`
-- AI 面板退出返回 PTY 模式时重新 `EnableMouseCapture`
+### 9.2 为什么不用 crossterm 解析
 
-**远端侧**：
-- 连接建立后向 PTY 发送 `\x1b[?1000h\x1b[?1006h` 启用 SGR 鼠标协议
-- 退出清理时发送 `\x1b[?1006l\x1b[?1000l` 禁用
+早期实现用 crossterm `EventStream` 把 stdin 解析成事件，再用 `translate_key_to_bytes`/`translate_mouse_event` 重新编码转发。这个"解析-重编码"循环有两个致命问题：
 
-**SGR 编码格式**：`\x1b[<{button};{col};{row}{action}`
-- button: 0=左键, 1=中键, 2=右键, 32-34=拖拽, 64=上滚, 65=下滚
-- action: `M`=按下, `m`=释放
+1. **吞掉终端应答序列**：远端应用（tmux/vim 等）会向终端发查询（如 `\x1b[?997n`），终端的应答（如 `\x1b[?997;2n`）经 stdin 返回。crossterm 不认识这些序列、解析不出事件就直接丢弃，远端等不到应答而卡住。
+2. **解析器在 Ghostty 上停摆**：Ghostty 会发送 iTerm2 不发的特有序列，crossterm 解析器遇到后停止产出事件，表现为"输出正常、键盘卡死"。
+
+改为原始字节透传后，stdin 字节（键盘、鼠标 SGR 序列、终端应答）原样到达远端，与直连 `rmux attach` 行为一致。
+
+### 9.3 鼠标
+
+鼠标模式完全由**远端应用拥有**：远端通过透传输出自行启用 SGR 协议（`\x1b[?1000h\x1b[?1002h\x1b[?1006h` 等），终端上报的 SGR 序列（`\x1b[<{button};{col};{row}{M/m}`）作为普通 stdin 字节直接转发。**CLI 不写任何鼠标模式序列，也不翻译鼠标事件。**
+
+> **历史教训**：CLI 曾自行向终端写鼠标模式序列（crossterm `EnableMouseCapture`），与透传输出中远端写入的序列形成"双重驱动"；其默认启用的 1003（any-motion）还会让 Ghostty 上报海量触摸板微动事件。这些均已移除。
 
 ---
 

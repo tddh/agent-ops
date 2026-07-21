@@ -1,5 +1,4 @@
 pub mod ai_panel;
-pub mod keymap;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -10,25 +9,22 @@ use std::os::unix::io::AsRawFd;
 
 use agent_ops_core::HostConfig;
 use anyhow::Result;
-use crossterm::event::{
-    Event, EventStream, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
-};
+use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::ExecutableCommand;
 use futures::StreamExt;
 use ratatui::Terminal;
 use ratatui_crossterm::CrosstermBackend;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
-use crate::connect::{connect_to_bridge_quic, translate_key_to_bytes};
+use crate::connect::connect_to_bridge_quic;
 use crate::protocol::{
     read_attached_response, recv_json_frame, send_json_frame, write_attach_request, write_detach,
     write_resize,
 };
 
 use self::ai_panel::{AiPanel, Message, Role};
-use self::keymap::Action;
 
 // 鼠标捕获序列：点击/拖动/滚轮 + SGR 编码。
 // 故意不包含 1003 (any-motion)：Ghostty 会把每次触摸板微动都上报为事件，
@@ -277,40 +273,6 @@ async fn ai_loop(
 
 // ── PTY Mode (Main Screen — raw passthrough) ──
 
-// ── Mouse event translation (SGR protocol) ──
-
-fn translate_mouse_event(event: &crossterm::event::MouseEvent) -> Vec<u8> {
-    let (button, action) = match event.kind {
-        MouseEventKind::Down(btn) => match btn {
-            MouseButton::Left => (0, b'M'),
-            MouseButton::Middle => (1, b'M'),
-            MouseButton::Right => (2, b'M'),
-        },
-        MouseEventKind::Up(btn) => match btn {
-            MouseButton::Left => (0, b'm'),
-            MouseButton::Middle => (1, b'm'),
-            MouseButton::Right => (2, b'm'),
-        },
-        MouseEventKind::Drag(btn) => match btn {
-            MouseButton::Left => (32, b'M'),
-            MouseButton::Middle => (33, b'M'),
-            MouseButton::Right => (34, b'M'),
-        },
-        MouseEventKind::ScrollDown => (65, b'M'),
-        MouseEventKind::ScrollUp => (64, b'M'),
-        _ => return Vec::new(),
-    };
-    // SGR format: \x1b[<{button};{col};{row}{action}
-    format!(
-        "\x1b[<{};{};{}{}",
-        button,
-        event.column + 1,
-        event.row + 1,
-        action as char
-    )
-    .into_bytes()
-}
-
 pub async fn run_connect_with_ai(
     config: &HostConfig,
     ca_cert_path: &str,
@@ -395,12 +357,25 @@ pub async fn run_connect_with_ai(
         })
     };
 
-    let mut event_stream = EventStream::new();
+    // PTY 模式：原始字节透传。
+    // 不用 crossterm 解析 stdin——"解析成事件再重新编码"会吞掉远端等待的终端
+    // 应答序列（如 \x1b[?997;2n），且 crossterm 解析器遇到 Ghostty 特有
+    // 序列会停摆。这里直接转发原始字节，只拦截本地控制键；resize 走 SIGWINCH。
+    #[cfg(unix)]
+    let mut sigwinch =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())?;
+    let mut stdin = tokio::io::stdin();
+    let mut inbuf = [0u8; 1024];
 
-    // PTY mode event loop
+    enum Input {
+        Bytes(usize),
+        Resize,
+        Eof,
+    }
+
     loop {
-        let event_opt = if is_ai_mode.load(Ordering::Relaxed) {
-            // AI mode — enter alternate screen
+        if is_ai_mode.load(Ordering::Relaxed) {
+            // AI 模式——备用屏（ai_loop 期间由它自己的 crossterm 接管 stdin）
             tokio::io::stdout().flush().await.ok();
             let result = ai_loop(&json_send, &json_recv, &pty_buffer, &ai, session_name).await;
             is_ai_mode.store(false, Ordering::Relaxed);
@@ -408,61 +383,70 @@ pub async fn run_connect_with_ai(
                 break;
             }
             continue;
-        } else {
-            match event_stream.next().await {
-                Some(Ok(event)) => Some(event),
-                _ => break,
+        }
+
+        let input = {
+            #[cfg(unix)]
+            {
+                tokio::select! {
+                    r = stdin.read(&mut inbuf) => match r {
+                        Ok(0) => Input::Eof,
+                        Ok(n) => Input::Bytes(n),
+                        Err(_) => Input::Eof,
+                    },
+                    _ = sigwinch.recv() => Input::Resize,
+                }
+            }
+            #[cfg(not(unix))]
+            match stdin.read(&mut inbuf).await {
+                Ok(0) => Input::Eof,
+                Ok(n) => Input::Bytes(n),
+                Err(_) => Input::Eof,
             }
         };
 
-        if let Some(event) = event_opt {
-            match event {
-                Event::Key(key) => {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
-                    }
-                    let action = keymap::classify(&key);
-
-                    match action {
-                        Action::AskQuestion => {
-                            // Enter AI mode
+        match input {
+            Input::Eof => break,
+            Input::Resize => {
+                if let Ok((cols, rows)) = crossterm::terminal::size() {
+                    let mut cs = ctrl_send.lock().await;
+                    write_resize(&mut cs, cols, rows).await.ok();
+                }
+            }
+            Input::Bytes(n) => {
+                // 拦截本地控制字节，其余原样转发给远端 PTY。
+                let mut forward: Vec<u8> = Vec::with_capacity(n);
+                let mut detach = false;
+                for &b in &inbuf[..n] {
+                    match b {
+                        0x07 => {
+                            // Ctrl+G → AI 模式
                             is_ai_mode.store(true, Ordering::Relaxed);
-                            // loop will handle it on next iteration
                         }
-                        Action::Detach => break,
-                        Action::ClearHistory => {
+                        0x1c => {
+                            // Ctrl+\ → detach
+                            detach = true;
+                        }
+                        0x0c => {
+                            // Ctrl+L → 清空 AI 历史
                             handle_clear(&ai).await;
                         }
-                        Action::Noop | Action::ForwardToPty(_) => {
+                        _ => {
                             if !readonly {
-                                let bytes = translate_key_to_bytes(key);
-                                if !bytes.is_empty() {
-                                    let mut s = pty_send.lock().await;
-                                    if s.write_all(&bytes).await.is_err() {
-                                        break;
-                                    }
-                                }
+                                forward.push(b);
                             }
                         }
                     }
                 }
-                Event::Resize(cols, rows) => {
-                    let mut cs = ctrl_send.lock().await;
-                    write_resize(&mut cs, cols, rows).await.ok();
-                }
-                Event::Mouse(mouse) => {
-                    if readonly {
-                        continue;
-                    }
-                    let bytes = translate_mouse_event(&mouse);
-                    if !bytes.is_empty() {
-                        let mut s = pty_send.lock().await;
-                        if s.write_all(&bytes).await.is_err() {
-                            break;
-                        }
+                if !forward.is_empty() {
+                    let mut s = pty_send.lock().await;
+                    if s.write_all(&forward).await.is_err() {
+                        break;
                     }
                 }
-                _ => {}
+                if detach {
+                    break;
+                }
             }
         }
     }

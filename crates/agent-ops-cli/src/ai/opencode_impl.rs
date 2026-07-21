@@ -54,6 +54,7 @@ async fn ensure_serve_impl(force: bool) -> Result<()> {
     let mut cmd = tokio::process::Command::new("opencode");
     cmd.args(["serve", "--port", &SERVE_PORT.to_string()])
         .current_dir(&dir)
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true);

@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Ghostty 中 `connect` 后键盘卡死**（输出正常、输入无响应）：PTY 模式从 crossterm 事件解析改为**原始字节透传**。原"解析成事件再重新编码"的实现会吞掉远端等待的终端应答序列（如 `\x1b[?997;2n`），且 crossterm 解析器遇到 Ghostty 特有序列会停摆。现在 stdin 字节直接转发远端，仅拦截 `Ctrl+G`/`Ctrl+\`/`Ctrl+L` 控制字节，resize 改用 SIGWINCH；鼠标模式改由远端应用拥有，CLI 不再写鼠标序列、不再翻译鼠标事件。同步移除 `translate_mouse_event` 与 `keymap` 模块
+- **opencode serve 抢占终端输入**：spawn 时补 `stdin(Stdio::null())`，避免子进程继承终端 stdin 与 CLI 抢输入
+
 ## [0.4.1] — 2026-07-20
 
 ### Changed
