@@ -45,18 +45,6 @@ fn write_mouse(seq: &[u8]) -> std::io::Result<()> {
     out.flush()
 }
 
-fn dbglog(msg: &str) {
-    use std::io::Write as _;
-    let _ = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/agent-ops-cli-debug.log")
-        .and_then(|mut f| writeln!(f, "[{}] {}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis(), msg));
-}
-
 // ── Helper functions ──
 
 async fn capture_pane(
@@ -148,7 +136,9 @@ async fn ai_loop(
     #[cfg(unix)]
     let null = std::fs::OpenOptions::new().write(true).open("/dev/null")?;
     #[cfg(unix)]
-    unsafe { libc::dup2(null.as_raw_fd(), 2) };
+    unsafe {
+        libc::dup2(null.as_raw_fd(), 2)
+    };
 
     let backend = CrosstermBackend::new(std::io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -419,22 +409,9 @@ pub async fn run_connect_with_ai(
             }
             continue;
         } else {
-            dbglog("loop: wait event");
             match event_stream.next().await {
-                Some(Ok(event)) => {
-                    let tag = match &event {
-                        Event::Key(k) => format!("key {:?}", k.code),
-                        Event::Mouse(_) => "mouse".to_string(),
-                        Event::Resize(c, r) => format!("resize {}x{}", c, r),
-                        _ => "other".to_string(),
-                    };
-                    dbglog(&format!("loop: GOT {}", tag));
-                    Some(event)
-                }
-                _ => {
-                    dbglog("loop: stream ended");
-                    break;
-                }
+                Some(Ok(event)) => Some(event),
+                _ => break,
             }
         };
 
@@ -460,12 +437,8 @@ pub async fn run_connect_with_ai(
                             if !readonly {
                                 let bytes = translate_key_to_bytes(key);
                                 if !bytes.is_empty() {
-                                    dbglog(&format!("loop: forward {:?} ({}B), locking", key.code, bytes.len()));
                                     let mut s = pty_send.lock().await;
-                                    dbglog("loop: locked, writing");
-                                    let r = s.write_all(&bytes).await;
-                                    dbglog(&format!("loop: write done ok={}", r.is_ok()));
-                                    if r.is_err() {
+                                    if s.write_all(&bytes).await.is_err() {
                                         break;
                                     }
                                 }
