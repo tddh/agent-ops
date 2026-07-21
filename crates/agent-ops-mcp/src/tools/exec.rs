@@ -368,11 +368,14 @@ async fn exec_await_once<S>(
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
 {
-    let probe_text = match capture_window(stream, session_name, pane_id, PROBE_WINDOW).await {
-        Ok(t) => t,
-        Err(_) => return AwaitOutcome::Lost,
-    };
+    let (probe_text, probe_state, probe_cursor) =
+        match capture_window(stream, session_name, pane_id, PROBE_WINDOW).await {
+            Ok(r) => r,
+            Err(_) => return AwaitOutcome::Lost,
+        };
 
+    let mut last_state: Option<serde_json::Value> = probe_state;
+    let mut last_cursor: Option<serde_json::Value> = probe_cursor;
     let mut text = probe_text;
     if text.rfind(&sent.sentinel_marker).is_none() {
         let deadline = sent.started_at + std::time::Duration::from_millis(sent.timeout_ms);
@@ -429,18 +432,27 @@ where
         }
 
         // sentinel 刚出现：重新取小窗口（wait 期间屏幕已变化）
-        text = match capture_window(stream, session_name, pane_id, PROBE_WINDOW).await {
-            Ok(t) => t,
+        let (t, s, c) = match capture_window(stream, session_name, pane_id, PROBE_WINDOW).await {
+            Ok(r) => r,
             Err(_) => return AwaitOutcome::Lost,
         };
+        text = t;
+        last_state = s;
+        last_cursor = c;
     }
 
     // sentinel 已在窗口内：指数扩大窗口直到 start_marker 进入视野
-    let (mut full_text, window) =
+    let (mut full_text, window, s, c) =
         match fetch_until_marker(stream, session_name, pane_id, sent, text, PROBE_WINDOW).await {
             Ok(r) => r,
             Err(_) => return AwaitOutcome::Lost,
         };
+    if s.is_some() {
+        last_state = s;
+    }
+    if c.is_some() {
+        last_cursor = c;
+    }
 
     // wait/probe 的文本匹配可能命中 echo 回显（此时 "$?" 尚未展开为数字，
     // 输出行还没上屏）：等 exit code 可解析（输出行上屏）再解析，
@@ -450,22 +462,30 @@ where
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        full_text = match capture_window(stream, session_name, pane_id, window).await {
-            Ok(t) => t,
+        let (t, s, c) = match capture_window(stream, session_name, pane_id, window).await {
+            Ok(r) => r,
             Err(_) => return AwaitOutcome::Lost,
         };
+        full_text = t;
+        if s.is_some() {
+            last_state = s;
+        }
+        if c.is_some() {
+            last_cursor = c;
+        }
     }
 
-    AwaitOutcome::Done(parse_exec_output(full_text, None, None, sent, max_lines))
+    AwaitOutcome::Done(parse_exec_output(full_text, last_state, last_cursor, sent, max_lines))
 }
 
 /// capture pane 尾部 window 行（start_line 负值，走 scrollback）。
+/// 附带 bridge 返回的 terminal_state / cursor，供 exec 成功路径透传给调用方。
 async fn capture_window<S>(
     stream: &mut S,
     session_name: &str,
     pane_id: &str,
     window: i64,
-) -> Result<String, ()>
+) -> Result<(String, Option<serde_json::Value>, Option<serde_json::Value>), ()>
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
 {
@@ -477,7 +497,11 @@ where
     });
     send_json_frame(stream, &req).await.map_err(|_| ())?;
     let resp = recv_json_frame(stream).await.map_err(|_| ())?;
-    Ok(resp["text"].as_str().unwrap_or("").to_string())
+    Ok((
+        resp["text"].as_str().unwrap_or("").to_string(),
+        resp.get("terminal_state").cloned(),
+        resp.get("cursor").cloned(),
+    ))
 }
 
 /// 从已有窗口文本开始，指数扩大（20→40→…→SCROLLBACK_CAP）直到 start_marker
@@ -490,19 +514,24 @@ async fn fetch_until_marker<S>(
     sent: &SentCommand,
     mut text: String,
     mut window: i64,
-) -> Result<(String, i64), ()>
+) -> Result<(String, i64, Option<serde_json::Value>, Option<serde_json::Value>), ()>
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
 {
+    let mut state = None;
+    let mut cursor = None;
     loop {
         if text.rfind(&sent.start_marker).is_some() {
-            return Ok((text, window));
+            return Ok((text, window, state, cursor));
         }
         if window >= SCROLLBACK_CAP {
-            return Ok((text, window));
+            return Ok((text, window, state, cursor));
         }
         window = (window * 2).min(SCROLLBACK_CAP);
-        text = capture_window(stream, session_name, pane_id, window).await?;
+        let (t, s, c) = capture_window(stream, session_name, pane_id, window).await?;
+        text = t;
+        state = s;
+        cursor = c;
     }
 }
 

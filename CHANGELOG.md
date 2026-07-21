@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **exec 成功路径不返回 `terminal_state`/`cursor`**：与文档承诺不符（只有拒绝路径才带）。`capture_window` 现在透传 bridge 返回的这两个字段，等待循环记录最后一次 capture 的值并随成功结果返回
+
 ## [0.5.0] — 2026-07-20
 
 ### Added
