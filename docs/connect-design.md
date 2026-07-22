@@ -1504,7 +1504,7 @@ AI 面板依赖 `opencode serve --port 14096` 作为后端：
 |------|------|---------|
 | 断线重连 | QUIC 连接迁移 + rmux session reattach | 网络切换后自动恢复 |
 | 只读模式 | `agent-ops-cli connect --readonly` | 只能看不能输入 |
-| 审计集成 | connect 操作写入 SQLite 审计日志 | `audit query --action interactive_connect` |
+| 审计集成 | ✅ 已实现：bridge 端 PTY 录制 + 事件日志 + MCP 同步拉取 | `query_bridge_audit` / `list_recordings` |
 | 多人共享 | 多个客户端 attach 同一个 pane | 所有人看到相同输出 |
 
 ---
