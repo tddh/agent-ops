@@ -18,7 +18,7 @@ The three layers: **Protocol layer** (MCP standard interface for AI clients + CL
 
 ### Where does it fit?
 
-agent-ops provides **secure, reliable, auditable remote access to Linux hosts** — terminal sessions, file transfer, and port forwarding. It's not a replacement for SSH (transport layer), Ansible (configuration management), or tmux (terminal multiplexer). It's a new category: a **remote operations platform** that turns terminal sessions into programmable resources for both AI agents and humans.
+agent-ops provides **secure, reliable, auditable remote access to Linux hosts** — terminal sessions, file transfer, port forwarding, and operation audit. It's not a replacement for SSH (transport layer), Ansible (configuration management), or tmux (terminal multiplexer). It's a new category: a **remote operations platform** that turns terminal sessions into programmable resources for both AI agents and humans.
 
 agent-ops doesn't care what runs inside the terminal — raw shell commands, Ansible playbooks, build scripts, or interactive debugging. It provides the **persistent session + audit trail + multi-host operations**, and you bring the tools.
 
@@ -93,7 +93,7 @@ graph LR
 | **File transfer** | Upload/download over QUIC, recursive directory upload and download with concurrency |
 | **Port forwarding** | Local port forwarding tunnels through QUIC to access remote internal services |
 | **Multi-host orchestration** | Host registry with group/tag/label filtering, broadcast_keys for multi-pane |
-| **Audit logging** | SQLite audit logs for every tool call, CLI query/stats/cleanup |
+| **Audit logging** | SQLite audit logs + bridge-side PTY recording (asciinema v2) + event log + MCP periodic sync + `agent-ops-cli replay` playback |
 | **Terminal state awareness** | `capture_pane`, `exec`, `wait_for_text`, `wait_stable`, `pane_info` return `terminal_state` (ready/running/editor/pager/password/confirm/repl/unknown) and cursor position, so AI agents know what the terminal is currently doing |
 | **Exec safety check** | `exec` refuses execution when terminal is not in `ready` state (e.g., inside vim, less, password prompt), returning `refused: true` with actionable guidance to prevent command injection |
 
