@@ -37,4 +37,53 @@ pub struct BridgeConfig {
     /// Log level: trace, debug, info, warn, error.
     #[arg(long, default_value = "info", env = "RUST_LOG")]
     pub log_level: String,
+
+    /// Enable PTY session recording (asciinema v2 format).
+    #[arg(long, default_value = "true", env = "RECORDING_ENABLED")]
+    pub recording_enabled: bool,
+
+    /// Directory for recording files. Defaults to {binary_dir}/recordings.
+    #[arg(long, env = "RECORDING_DIR")]
+    pub recording_dir: Option<PathBuf>,
+
+    /// Recording retention in days.
+    #[arg(long, default_value = "90", env = "RECORDING_RETENTION_DAYS")]
+    pub recording_retention_days: u32,
+
+    /// Maximum total recording size in MB.
+    #[arg(long, default_value = "500", env = "RECORDING_MAX_SIZE_MB")]
+    pub recording_max_size_mb: u64,
+
+    /// Fsync interval for recording files in seconds.
+    #[arg(long, default_value = "5", env = "RECORDING_FSYNC_INTERVAL_SECS")]
+    pub recording_fsync_interval_secs: u64,
+
+    /// Bridge audit event database path. Defaults to {binary_dir}/bridge_events.db.
+    #[arg(long, env = "BRIDGE_AUDIT_DB")]
+    pub bridge_audit_db: Option<PathBuf>,
+}
+
+// These helpers are consumed by the recording/audit subsystem added in
+// subsequent tasks; allow dead_code until then to keep clippy clean.
+#[allow(dead_code)]
+impl BridgeConfig {
+    pub fn resolve_recording_dir(&self) -> PathBuf {
+        self.recording_dir.clone().unwrap_or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("recordings")
+        })
+    }
+
+    pub fn resolve_audit_db_path(&self) -> PathBuf {
+        self.bridge_audit_db.clone().unwrap_or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("bridge_events.db")
+        })
+    }
 }
