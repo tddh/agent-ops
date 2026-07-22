@@ -28,6 +28,7 @@ pub async fn proxy_protocol_aware<S>(
     tls_stream: S,
     protocol_proxy: &ProtocolProxy,
     audit_db: Arc<BridgeAuditDb>,
+    recording_dir: std::path::PathBuf,
 ) -> Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -121,6 +122,32 @@ where
                     json!({"total": total, "events_by_type": events_by_type})
                 }
                 Err(e) => json!({"error": format!("audit stats failed: {}", e)}),
+            };
+            send_response(&writer, &response).await?;
+            handled = true;
+            continue;
+        }
+
+        // list_unsynced_recordings: handle locally (not forwarded to rmux)
+        if request["command"].as_str() == Some("list_unsynced_recordings") {
+            let response = match crate::cast_recorder::list_unsynced(&recording_dir).await {
+                Ok(files) => json!({"files": files}),
+                Err(e) => json!({"error": format!("list_unsynced failed: {}", e)}),
+            };
+            send_response(&writer, &response).await?;
+            handled = true;
+            continue;
+        }
+
+        // mark_synced: handle locally (not forwarded to rmux)
+        if request["command"].as_str() == Some("mark_synced") {
+            let params = &request["params"];
+            let file = params["file"].as_str().unwrap_or("");
+            let date = params["date"].as_str().unwrap_or("");
+            let response = match crate::cast_recorder::mark_synced(&recording_dir, file, date).await
+            {
+                Ok(()) => json!({"ok": true}),
+                Err(e) => json!({"ok": false, "error": format!("mark_synced failed: {}", e)}),
             };
             send_response(&writer, &response).await?;
             handled = true;

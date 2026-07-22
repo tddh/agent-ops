@@ -492,6 +492,85 @@ pub async fn cleanup_recordings(
     Ok((files_deleted, bytes_freed))
 }
 
+/// List all recordings with `synced == false` in their `.meta` file.
+///
+/// Scans date directories under `recording_dir`, reads each `.meta` file,
+/// and returns entries where `synced` is false.
+pub async fn list_unsynced(recording_dir: &Path) -> anyhow::Result<Vec<serde_json::Value>> {
+    let mut results = Vec::new();
+    if !recording_dir.exists() {
+        return Ok(results);
+    }
+
+    let mut date_entries = tokio::fs::read_dir(recording_dir).await?;
+    while let Ok(Some(date_entry)) = date_entries.next_entry().await {
+        let date_name = date_entry.file_name().to_string_lossy().to_string();
+        // Only process YYYY-MM-DD directories.
+        if date_name.len() != 10
+            || date_name.as_bytes()[4] != b'-'
+            || date_name.as_bytes()[7] != b'-'
+        {
+            continue;
+        }
+        if !date_entry.file_type().await.is_ok_and(|ft| ft.is_dir()) {
+            continue;
+        }
+
+        let date_path = date_entry.path();
+        let mut meta_entries = tokio::fs::read_dir(&date_path).await?;
+        while let Ok(Some(meta_entry)) = meta_entries.next_entry().await {
+            let meta_name = meta_entry.file_name().to_string_lossy().to_string();
+            if !meta_name.ends_with(".meta") {
+                continue;
+            }
+
+            let meta_path = meta_entry.path();
+            let content = match tokio::fs::read_to_string(&meta_path).await {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let meta: serde_json::Value = match serde_json::from_str(&content) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            if meta["synced"].as_bool() == Some(false) {
+                let cast_name = meta_name.trim_end_matches(".meta").to_string() + ".cast";
+                let cast_path = date_path.join(&cast_name);
+                let size_bytes = tokio::fs::metadata(&cast_path)
+                    .await
+                    .map(|m| m.len())
+                    .unwrap_or_else(|_| meta["size_bytes"].as_u64().unwrap_or(0));
+
+                results.push(serde_json::json!({
+                    "file": cast_name,
+                    "date": date_name,
+                    "size_bytes": size_bytes,
+                    "sha256": meta["sha256"].as_str().unwrap_or(""),
+                }));
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+/// Mark a recording as synced in its `.meta` file.
+///
+/// Finds `{recording_dir}/{date}/{file_name}`, derives the `.meta` path,
+/// reads it, sets `"synced": true`, and writes it back.
+pub async fn mark_synced(recording_dir: &Path, file_name: &str, date: &str) -> anyhow::Result<()> {
+    let meta_path = recording_dir
+        .join(date)
+        .join(file_name)
+        .with_extension("meta");
+    let content = tokio::fs::read_to_string(&meta_path).await?;
+    let mut meta: serde_json::Value = serde_json::from_str(&content)?;
+    meta["synced"] = serde_json::json!(true);
+    tokio::fs::write(&meta_path, serde_json::to_string_pretty(&meta)?).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,5 +737,31 @@ mod tests {
         assert!(freed > 0, "should report bytes freed");
         assert!(!old_dir.exists(), "old dir should be removed");
         assert!(new_dir.exists(), "new dir should remain");
+    }
+
+    #[tokio::test]
+    async fn test_list_unsynced_and_mark_synced() {
+        let dir = tempfile::tempdir().unwrap();
+        let rec_dir = dir.path().join("recordings");
+        let date_dir = rec_dir.join("2026-07-22");
+        tokio::fs::create_dir_all(&date_dir).await.unwrap();
+
+        tokio::fs::write(date_dir.join("test.cast"), "data").await.unwrap();
+        tokio::fs::write(
+            date_dir.join("test.meta"),
+            r#"{"sha256": "abc", "synced": false, "size_bytes": 4}"#,
+        )
+        .await
+        .unwrap();
+
+        let unsynced = list_unsynced(&rec_dir).await.unwrap();
+        assert_eq!(unsynced.len(), 1);
+        assert_eq!(unsynced[0]["file"], "test.cast");
+        assert_eq!(unsynced[0]["date"], "2026-07-22");
+
+        mark_synced(&rec_dir, "test.cast", "2026-07-22").await.unwrap();
+
+        let unsynced_after = list_unsynced(&rec_dir).await.unwrap();
+        assert_eq!(unsynced_after.len(), 0);
     }
 }
