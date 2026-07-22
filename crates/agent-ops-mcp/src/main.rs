@@ -4,6 +4,7 @@ mod audit_cli;
 mod error;
 mod files;
 mod handler;
+mod recording_sync;
 mod router;
 mod schema;
 mod stream;
@@ -37,6 +38,18 @@ struct Cli {
 
     #[arg(long, default_value = "600")]
     audit_cleanup_interval_secs: u64,
+
+    #[arg(long, default_value = "300")]
+    audit_sync_interval_secs: u64,
+
+    #[arg(long)]
+    recordings_dir: Option<PathBuf>,
+
+    #[arg(long, default_value = "90")]
+    recordings_retention_days: u32,
+
+    #[arg(long, default_value = "5000")]
+    recordings_max_size_mb: u64,
 }
 
 pub(crate) fn resolve_audit_db_path(custom: Option<PathBuf>) -> PathBuf {
@@ -128,6 +141,25 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    let recordings_dir = cli
+        .recordings_dir
+        .clone()
+        .unwrap_or_else(recording_sync::default_recordings_dir);
+
+    // Start the background recording sync task (pulls unsynced .cast files from
+    // bridges into the local recordings directory).
+    let sync_config = recording_sync::RecordingSyncConfig {
+        interval_secs: cli.audit_sync_interval_secs,
+        recordings_dir: recordings_dir.clone(),
+        retention_days: cli.recordings_retention_days,
+        max_size_mb: cli.recordings_max_size_mb,
+    };
+    tokio::spawn(recording_sync::run_sync_loop(
+        sync_config,
+        Arc::clone(&router),
+        cli.ca_cert.clone(),
+    ));
+
     let ctx = Arc::new(tools::ToolContext {
         router,
         ca_cert_path: cli.ca_cert,
@@ -135,6 +167,7 @@ async fn main() -> anyhow::Result<()> {
         agent_name: std::sync::Mutex::new("unknown".to_string()),
         tunnel_manager: Arc::new(tunnel::TunnelManager::new()),
         stream_manager: Arc::new(stream::StreamManager::new()),
+        recordings_dir,
     });
 
     let tools_definition = schema::tools_definition();

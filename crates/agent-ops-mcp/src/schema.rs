@@ -878,6 +878,29 @@ pub fn tools_definition() -> Value {
                     },
                     "required": ["host"]
                 }
+            },
+            {
+                "name": "list_recordings",
+                "description": "列出已同步到本地的 PTY 会话录制文件（asciinema v2 .cast 文件）。可按主机名、日期 (YYYY-MM-DD)、会话名前缀过滤。返回每个录制文件的 host、date、file、size_bytes 和 path（path 用于 get_recording）。录制文件由后台同步任务定期从各 bridge 拉取到本地。",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "按主机名过滤" },
+                        "date": { "type": "string", "description": "按日期过滤 (YYYY-MM-DD)" },
+                        "session": { "type": "string", "description": "按会话名前缀过滤" }
+                    }
+                }
+            },
+            {
+                "name": "get_recording",
+                "description": "获取指定录制文件的内容（asciinema v2 格式）。path 必须是 list_recordings 返回的绝对路径；出于安全考虑，路径必须位于本地录制目录内（拒绝路径穿越）。返回文件的完整文本内容。",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "录制文件路径（从 list_recordings 获取）" }
+                    },
+                    "required": ["path"]
+                }
             }
         ]
     })

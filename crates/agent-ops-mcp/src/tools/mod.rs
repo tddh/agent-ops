@@ -1,8 +1,10 @@
 use anyhow::Result;
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::audit;
+use crate::recording_sync;
 use crate::router::HostRouter;
 use crate::stream::StreamManager;
 use crate::tunnel::TunnelManager;
@@ -31,6 +33,7 @@ pub struct ToolContext {
     pub agent_name: std::sync::Mutex<String>,
     pub tunnel_manager: Arc<TunnelManager>,
     pub stream_manager: Arc<StreamManager>,
+    pub recordings_dir: PathBuf,
 }
 
 pub async fn execute_tool(ctx: &ToolContext, tool_name: &str, args: Value) -> Result<Value> {
@@ -139,6 +142,123 @@ pub async fn execute_tool(ctx: &ToolContext, tool_name: &str, args: Value) -> Re
             }
             result
         }
+        "list_recordings" => {
+            let start = std::time::Instant::now();
+            let host = args.get("host").and_then(|v| v.as_str());
+            let date = args.get("date").and_then(|v| v.as_str());
+            let session = args.get("session").and_then(|v| v.as_str());
+            let result =
+                recording_sync::list_local_recordings(&ctx.recordings_dir, host, date, session)
+                    .await;
+            let duration_ms = start.elapsed().as_millis() as u64;
+            match result {
+                Ok(list) => {
+                    let value = json!({ "recordings": list, "count": list.len() });
+                    audit(
+                        ctx,
+                        agent_ops_core::types::AuditAction::AuditQuery,
+                        "",
+                        "",
+                        None,
+                        "list_recordings",
+                        None,
+                        true,
+                        duration_ms,
+                        None,
+                    )
+                    .await;
+                    Ok(value)
+                }
+                Err(e) => {
+                    let err_msg = format!("{:#}", e);
+                    audit(
+                        ctx,
+                        agent_ops_core::types::AuditAction::AuditQuery,
+                        "",
+                        "",
+                        None,
+                        "list_recordings",
+                        None,
+                        false,
+                        duration_ms,
+                        Some(&err_msg),
+                    )
+                    .await;
+                    Ok(json!({ "error": err_msg }))
+                }
+            }
+        }
+        "get_recording" => {
+            let start = std::time::Instant::now();
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let result = read_recording_file(&ctx.recordings_dir, path).await;
+            let duration_ms = start.elapsed().as_millis() as u64;
+            match result {
+                Ok(value) => {
+                    audit(
+                        ctx,
+                        agent_ops_core::types::AuditAction::AuditQuery,
+                        "",
+                        "",
+                        None,
+                        "get_recording",
+                        None,
+                        true,
+                        duration_ms,
+                        None,
+                    )
+                    .await;
+                    Ok(value)
+                }
+                Err(e) => {
+                    let err_msg = format!("{:#}", e);
+                    audit(
+                        ctx,
+                        agent_ops_core::types::AuditAction::AuditQuery,
+                        "",
+                        "",
+                        None,
+                        "get_recording",
+                        None,
+                        false,
+                        duration_ms,
+                        Some(&err_msg),
+                    )
+                    .await;
+                    Ok(json!({ "error": err_msg }))
+                }
+            }
+        }
         _ => anyhow::bail!("unknown tool: {}", tool_name),
     }
+}
+
+/// Read a recording file's content, ensuring the resolved path stays within
+/// `recordings_dir` (path-traversal protection).
+async fn read_recording_file(recordings_dir: &std::path::Path, path: &str) -> Result<Value> {
+    if path.is_empty() {
+        anyhow::bail!("missing 'path'");
+    }
+    let requested = std::path::Path::new(path);
+    if !requested.is_absolute() {
+        anyhow::bail!("path must be absolute (use the path returned by list_recordings)");
+    }
+
+    let canonical_root = recordings_dir
+        .canonicalize()
+        .map_err(|_| anyhow::anyhow!("recordings directory not found"))?;
+    let canonical_path = requested
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("failed to resolve path: {e}"))?;
+    if !canonical_path.starts_with(&canonical_root) {
+        anyhow::bail!("path outside recordings directory");
+    }
+
+    let content = tokio::fs::read_to_string(&canonical_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to read recording: {e}"))?;
+    Ok(json!({
+        "path": canonical_path.to_string_lossy(),
+        "content": content,
+    }))
 }
