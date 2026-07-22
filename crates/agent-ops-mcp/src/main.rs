@@ -88,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         let sig_router = Arc::clone(&router);
+        let sig_audit_db = Arc::clone(&audit_db);
         tokio::spawn(async move {
             let mut sig =
                 match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) {
@@ -102,6 +103,22 @@ async fn main() -> anyhow::Result<()> {
                 match sig_router.reload() {
                     Ok(count) => {
                         tracing::info!("SIGHUP: successfully reloaded {} hosts from config", count);
+                        sig_audit_db
+                            .log(agent_ops_core::types::AuditEvent {
+                                event_id: uuid::Uuid::new_v4(),
+                                timestamp: chrono::Utc::now(),
+                                agent_name: "system".to_string(),
+                                host_name: String::new(),
+                                session_name: String::new(),
+                                pane_id: None,
+                                action: agent_ops_core::types::AuditAction::ConfigReload,
+                                detail: "SIGHUP received".to_string(),
+                                output_summary: None,
+                                success: true,
+                                duration_ms: 0,
+                                error_message: None,
+                            })
+                            .await;
                     }
                     Err(e) => {
                         tracing::error!("SIGHUP: config reload failed: {e}");

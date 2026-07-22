@@ -8,6 +8,7 @@ use crate::stream::StreamManager;
 use crate::tunnel::TunnelManager;
 
 mod batch;
+mod bridge_audit;
 mod buffer;
 mod common;
 mod deploy;
@@ -97,6 +98,47 @@ pub async fn execute_tool(ctx: &ToolContext, tool_name: &str, args: Value) -> Re
         "wait_stable" => output::wait_stable(ctx, args).await,
         "deploy_bridge" => deploy::deploy_bridge(ctx, args).await,
         "reload_config" => session::reload_config(ctx).await,
+        "query_bridge_audit" => {
+            let start = std::time::Instant::now();
+            let host = args["host"].as_str().unwrap_or("").to_string();
+            let result = bridge_audit::query_bridge_audit(ctx, args).await;
+            let duration_ms = start.elapsed().as_millis() as u64;
+            match &result {
+                Ok(value) => {
+                    let has_error = value.get("error").and_then(|v| v.as_str()).is_some();
+                    audit(
+                        ctx,
+                        agent_ops_core::types::AuditAction::BridgeAuditQuery,
+                        &host,
+                        "",
+                        None,
+                        "query_bridge_audit",
+                        None,
+                        !has_error,
+                        duration_ms,
+                        value.get("error").and_then(|v| v.as_str()),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    let err_msg = format!("{:#}", e);
+                    audit(
+                        ctx,
+                        agent_ops_core::types::AuditAction::BridgeAuditQuery,
+                        &host,
+                        "",
+                        None,
+                        "query_bridge_audit",
+                        None,
+                        false,
+                        duration_ms,
+                        Some(&err_msg),
+                    )
+                    .await;
+                }
+            }
+            result
+        }
         _ => anyhow::bail!("unknown tool: {}", tool_name),
     }
 }

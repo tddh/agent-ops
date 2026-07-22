@@ -1,8 +1,31 @@
 use crate::audit;
+use agent_ops_core::types::{AuditAction, AuditEvent};
+use chrono::Utc;
 use clap::Parser;
 use std::path::PathBuf;
+use uuid::Uuid;
 
 use crate::resolve_audit_db_path;
+
+/// Log an audit event recording that the CLI itself ran an audit subcommand.
+/// Failures are ignored — auditing the audit tool must never break the command.
+async fn log_cli_audit(db: &audit::AuditDb, action: AuditAction, detail: String) {
+    db.log(AuditEvent {
+        event_id: Uuid::new_v4(),
+        timestamp: Utc::now(),
+        agent_name: "cli".to_string(),
+        host_name: String::new(),
+        session_name: String::new(),
+        pane_id: None,
+        action,
+        detail,
+        output_summary: None,
+        success: true,
+        duration_ms: 0,
+        error_message: None,
+    })
+    .await;
+}
 
 pub async fn run_audit_command() -> anyhow::Result<()> {
     #[derive(Parser)]
@@ -82,12 +105,25 @@ pub async fn run_audit_command() -> anyhow::Result<()> {
             };
             let result = audit_db.query(params, fmt).await?;
             println!("{}", result);
+            log_cli_audit(
+                &audit_db,
+                AuditAction::AuditQuery,
+                format!("limit={}", limit),
+            )
+            .await;
         }
         AuditCommand::Stats { db, since } => {
             let db_path = resolve_audit_db_path(db);
             let audit_db = audit::AuditDb::open(&db_path)?;
+            let since_detail = since.clone();
             let result = audit_db.stats(since).await?;
             println!("{}", result);
+            log_cli_audit(
+                &audit_db,
+                AuditAction::AuditStats,
+                format!("since={:?}", since_detail),
+            )
+            .await;
         }
         AuditCommand::Cleanup {
             db,
@@ -100,6 +136,12 @@ pub async fn run_audit_command() -> anyhow::Result<()> {
             let size = max_size.unwrap_or(500);
             audit_db.cleanup(days, size).await?;
             println!("Cleanup completed.");
+            log_cli_audit(
+                &audit_db,
+                AuditAction::AuditCleanup,
+                format!("older_than_days={} max_size_mb={}", days, size),
+            )
+            .await;
         }
     }
     Ok(())

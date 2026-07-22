@@ -862,6 +862,22 @@ pub fn tools_definition() -> Value {
                     },
                     "required": ["hosts", "binary_path"]
                 }
+            },
+            {
+                "name": "query_bridge_audit",
+                "description": "查询目标主机 bridge 侧的连接事件日志（认证、attach/detach、文件操作、tunnel 等）",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string", "description": "目标主机名" },
+                        "event_type": { "type": "string", "description": "事件类型过滤" },
+                        "session_name": { "type": "string", "description": "会话名过滤" },
+                        "since": { "type": "string", "description": "起始时间 (RFC3339)" },
+                        "until": { "type": "string", "description": "截止时间 (RFC3339)" },
+                        "limit": { "type": "integer", "description": "返回条数上限", "default": 50 }
+                    },
+                    "required": ["host"]
+                }
             }
         ]
     })
