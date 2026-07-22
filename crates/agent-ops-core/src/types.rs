@@ -136,4 +136,9 @@ pub enum AuditAction {
     WaitForBytes,
     WaitStable,
     DeployBridge,
+    AuditQuery,
+    AuditStats,
+    AuditCleanup,
+    ConfigReload,
+    BridgeAuditQuery,
 }
