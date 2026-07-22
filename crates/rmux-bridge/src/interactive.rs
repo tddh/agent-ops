@@ -6,10 +6,12 @@ use anyhow::{Context, Result};
 use quinn::{RecvStream, SendStream};
 use rmux_sdk::TerminalSizeSpec;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::{Mutex, Notify};
 
+use crate::cast_recorder::{finalize_cast, CastRecorder};
 use crate::protocol::ProtocolProxy;
 
 /// Interactive session state shared between control (0x06) and data (0x07) streams.
@@ -24,6 +26,7 @@ pub struct InteractiveSession {
     pub child_pid: Option<u32>,
     pub exit_code: Option<i32>,
     pub exit_notify: Arc<Notify>,
+    pub recording_file: Option<String>,
 }
 
 const SCROLLBACK_LINES: usize = 50;
@@ -115,6 +118,7 @@ pub async fn handle_interactive_control(
             child_pid: None,
             exit_code: None,
             exit_notify: exit_notify.clone(),
+            recording_file: None,
         });
     }
 
@@ -197,6 +201,9 @@ pub async fn handle_interactive_data(
     mut recv: RecvStream,
     _proxy: Arc<ProtocolProxy>,
     session_state: Arc<Mutex<Option<InteractiveSession>>>,
+    recording_enabled: bool,
+    recording_dir: PathBuf,
+    fsync_interval_secs: u64,
 ) -> Result<()> {
     let (session_name, socket_path) = {
         let start = std::time::Instant::now();
@@ -227,10 +234,10 @@ pub async fn handle_interactive_data(
         anyhow::bail!("openpty failed: {}", std::io::Error::last_os_error());
     }
 
-    let (cols, rows) = {
+    let (cols, rows, pane_id) = {
         let state = session_state.lock().await;
         let info = state.as_ref().context("session state missing")?;
-        (info.cols, info.rows)
+        (info.cols, info.rows, info.pane_id.clone())
     };
 
     let winsize = libc::winsize {
@@ -301,12 +308,59 @@ pub async fn handle_interactive_data(
 
     let async_fd = AsyncFd::new(master_fd).context("failed to create AsyncFd for PTY")?;
 
+    // ─── Start cast recording if enabled ───
+    let recorder: Option<CastRecorder> = if recording_enabled {
+        let now = chrono::Utc::now();
+        let date_dir = recording_dir.join(now.format("%Y-%m-%d").to_string());
+        if let Err(e) = tokio::fs::create_dir_all(&date_dir).await {
+            tracing::warn!("failed to create recording dir {:?}: {}", date_dir, e);
+            None
+        } else {
+            let epoch = now.timestamp();
+            // Generate a 4-hex client id from SystemTime hash (no rand crate).
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            std::time::SystemTime::now().hash(&mut hasher);
+            let client_id = format!("{:04x}", hasher.finish() & 0xFFFF);
+
+            let filename = format!(
+                "{}_{}_{}_{client_id}.cast",
+                session_name, pane_id, epoch
+            );
+            let cast_path = date_dir.join(&filename);
+
+            match CastRecorder::start(cast_path.clone(), cols, rows, fsync_interval_secs).await {
+                Ok(rec) => {
+                    tracing::info!(path = %cast_path.display(), "started cast recording");
+                    // Store recording path in session state.
+                    {
+                        let mut state = session_state.lock().await;
+                        if let Some(ref mut s) = *state {
+                            s.recording_file = Some(cast_path.to_string_lossy().to_string());
+                        }
+                    }
+                    Some(rec)
+                }
+                Err(e) => {
+                    tracing::warn!("failed to start cast recording: {}", e);
+                    None
+                }
+            }
+        }
+    } else {
+        None
+    };
+
     let quic_to_pty = async {
         let mut buf = [0u8; 4096];
         loop {
             let n = recv.read(&mut buf).await?.unwrap_or(0);
             if n == 0 {
                 break;
+            }
+
+            if let Some(ref rec) = recorder {
+                rec.record_input(&buf[..n]);
             }
 
             let mut written = 0;
@@ -359,6 +413,9 @@ pub async fn handle_interactive_data(
             match result {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => {
+                    if let Some(ref rec) = recorder {
+                        rec.record_output(&buf[..n]);
+                    }
                     send.write_all(&buf[..n]).await?;
                 }
                 Ok(Err(e)) => return Err(e.into()),
@@ -390,6 +447,29 @@ pub async fn handle_interactive_data(
             s.master_fd = None;
             s.child_pid = None;
             s.exit_notify.notify_one();
+        }
+    }
+
+    // ─── Finalize cast recording ───
+    if let Some(rec) = recorder {
+        let cast_path = rec.path().to_path_buf();
+        if let Some(meta) = rec.finish(code).await {
+            match finalize_cast(&cast_path, &meta).await {
+                Ok(()) => {
+                    tracing::info!(
+                        path = %cast_path.display(),
+                        sha256 = %meta.sha256,
+                        size_bytes = meta.size_bytes,
+                        duration_secs = meta.duration_secs,
+                        "cast recording finalized"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("failed to finalize cast {:?}: {}", cast_path, e);
+                }
+            }
+        } else {
+            tracing::warn!("cast recording returned no metadata: {:?}", cast_path);
         }
     }
 

@@ -30,6 +30,9 @@ pub async fn handle_quic_stream(
     mut recv: quinn::RecvStream,
     protocol_proxy: std::sync::Arc<crate::protocol::ProtocolProxy>,
     session_state: std::sync::Arc<tokio::sync::Mutex<Option<InteractiveSession>>>,
+    recording_enabled: bool,
+    recording_dir: std::path::PathBuf,
+    fsync_interval_secs: u64,
 ) -> anyhow::Result<()> {
     let mut type_buf = [0u8; 1];
     recv.read_exact(&mut type_buf).await?;
@@ -51,8 +54,16 @@ pub async fn handle_quic_stream(
             .await
         }
         0x07 => {
-            crate::interactive::handle_interactive_data(send, recv, protocol_proxy, session_state)
-                .await
+            crate::interactive::handle_interactive_data(
+                send,
+                recv,
+                protocol_proxy,
+                session_state,
+                recording_enabled,
+                recording_dir,
+                fsync_interval_secs,
+            )
+            .await
         }
         t => {
             tracing::warn!("unknown QUIC stream type: 0x{:02x}", t);

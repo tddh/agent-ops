@@ -41,6 +41,9 @@ async fn main() -> anyhow::Result<()> {
     // ─── QUIC file transfer listener ───
     let quic_config = config.clone();
     let quic_conn_limit_pre = conn_limit.clone();
+    let recording_enabled = config.recording_enabled;
+    let recording_dir = config.resolve_recording_dir();
+    let fsync_interval_secs = config.recording_fsync_interval_secs;
     tokio::spawn(async move {
         let conn_limit = quic_conn_limit_pre;
         let tls_cfg =
@@ -83,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
 
             let token = auth_token.clone();
             let rmux_socket = quic_rmux_socket.clone();
+            let conn_recording_dir = recording_dir.clone();
             tokio::spawn(async move {
                 let _permit = _permit;
                 let conn = match incoming.await {
@@ -124,9 +128,20 @@ async fn main() -> anyhow::Result<()> {
                         Ok((send, recv)) => {
                             let proxy = protocol_proxy.clone();
                             let state = session_state.clone();
+                            let rec_dir = conn_recording_dir.clone();
+                            let rec_enabled = recording_enabled;
+                            let rec_fsync = fsync_interval_secs;
                             tokio::spawn(async move {
-                                if let Err(e) =
-                                    files::handle_quic_stream(send, recv, proxy, state).await
+                                if let Err(e) = files::handle_quic_stream(
+                                    send,
+                                    recv,
+                                    proxy,
+                                    state,
+                                    rec_enabled,
+                                    rec_dir,
+                                    rec_fsync,
+                                )
+                                .await
                                 {
                                     tracing::warn!("QUIC stream error: {}", e);
                                 }

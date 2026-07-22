@@ -4,10 +4,6 @@
 //! writer tokio task. If the channel is full, `try_send` drops events
 //! (non-blocking, never blocks the PTY data path).
 
-// This module is not yet wired into the binary's main flow; it will be
-// integrated by subsequent tasks in the audit trail system.
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 

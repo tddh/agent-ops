@@ -63,9 +63,6 @@ pub struct BridgeConfig {
     pub bridge_audit_db: Option<PathBuf>,
 }
 
-// These helpers are consumed by the recording/audit subsystem added in
-// subsequent tasks; allow dead_code until then to keep clippy clean.
-#[allow(dead_code)]
 impl BridgeConfig {
     pub fn resolve_recording_dir(&self) -> PathBuf {
         self.recording_dir.clone().unwrap_or_else(|| {
@@ -77,6 +74,7 @@ impl BridgeConfig {
         })
     }
 
+    #[allow(dead_code)]
     pub fn resolve_audit_db_path(&self) -> PathBuf {
         self.bridge_audit_db.clone().unwrap_or_else(|| {
             std::env::current_exe()
