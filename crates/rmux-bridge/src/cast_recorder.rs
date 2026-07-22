@@ -450,7 +450,11 @@ pub async fn cleanup_recordings(
         if name.as_str() < cutoff_str.as_str() {
             let size = dir_size(path).await;
             if let Err(e) = remove_dir_all_with_chattr(path).await {
-                tracing::warn!("failed to remove old recording dir {}: {}", path.display(), e);
+                tracing::warn!(
+                    "failed to remove old recording dir {}: {}",
+                    path.display(),
+                    e
+                );
                 remaining.push((name.clone(), path.clone()));
             } else {
                 files_deleted += 1;
@@ -482,11 +486,7 @@ pub async fn cleanup_recordings(
     }
 
     if files_deleted > 0 {
-        tracing::info!(
-            files_deleted,
-            bytes_freed,
-            "recording cleanup completed"
-        );
+        tracing::info!(files_deleted, bytes_freed, "recording cleanup completed");
     }
 
     Ok((files_deleted, bytes_freed))
@@ -535,7 +535,11 @@ mod tests {
         // Validate event lines are valid JSON arrays.
         for line in &lines[1..] {
             let val: serde_json::Value = serde_json::from_str(line).unwrap();
-            assert!(val.is_array(), "event line should be a JSON array: {}", line);
+            assert!(
+                val.is_array(),
+                "event line should be a JSON array: {}",
+                line
+            );
             let arr = val.as_array().unwrap();
             assert!(arr[0].is_number(), "first element should be timestamp");
             assert!(arr[1].is_string(), "second element should be event type");
@@ -648,9 +652,7 @@ mod tests {
             .unwrap();
 
         // Run cleanup with retention_days=90 — old dir should be deleted.
-        let (deleted, freed) = cleanup_recordings(&recordings, 90, 1024)
-            .await
-            .unwrap();
+        let (deleted, freed) = cleanup_recordings(&recordings, 90, 1024).await.unwrap();
 
         assert_eq!(deleted, 1, "should delete exactly 1 directory");
         assert!(freed > 0, "should report bytes freed");

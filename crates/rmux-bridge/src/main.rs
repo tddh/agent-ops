@@ -31,6 +31,11 @@ async fn main() -> anyhow::Result<()> {
     // quinn needs explicit crypto provider in musl builds
     let _ = rustls::crypto::ring::default_provider().install_default();
 
+    let audit_db = Arc::new(
+        bridge_audit::BridgeAuditDb::open(&config.resolve_audit_db_path())
+            .expect("failed to open bridge audit db"),
+    );
+
     tracing::info!("rmux-bridge starting on {}", config.quic_listen_addr);
 
     let conn_limit = if config.max_connections > 0 {
@@ -45,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
     let recording_enabled = config.recording_enabled;
     let recording_dir = config.resolve_recording_dir();
     let fsync_interval_secs = config.recording_fsync_interval_secs;
+    let quic_audit_db = audit_db.clone();
     tokio::spawn(async move {
         let conn_limit = quic_conn_limit_pre;
         let tls_cfg =
@@ -88,6 +94,7 @@ async fn main() -> anyhow::Result<()> {
             let token = auth_token.clone();
             let rmux_socket = quic_rmux_socket.clone();
             let conn_recording_dir = recording_dir.clone();
+            let conn_audit_db = quic_audit_db.clone();
             tokio::spawn(async move {
                 let _permit = _permit;
                 let conn = match incoming.await {
@@ -106,8 +113,16 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
-                if let Err(e) =
-                    auth::authenticate_quic(&mut auth_send, &mut auth_recv, &token).await
+                let client_addr = conn.remote_address().to_string();
+
+                if let Err(e) = auth::authenticate_quic(
+                    &mut auth_send,
+                    &mut auth_recv,
+                    &token,
+                    conn_audit_db.clone(),
+                    client_addr,
+                )
+                .await
                 {
                     tracing::warn!("QUIC auth failed: {}", e);
                     return;
@@ -132,6 +147,7 @@ async fn main() -> anyhow::Result<()> {
                             let rec_dir = conn_recording_dir.clone();
                             let rec_enabled = recording_enabled;
                             let rec_fsync = fsync_interval_secs;
+                            let stream_audit_db = conn_audit_db.clone();
                             tokio::spawn(async move {
                                 if let Err(e) = files::handle_quic_stream(
                                     send,
@@ -141,6 +157,7 @@ async fn main() -> anyhow::Result<()> {
                                     rec_enabled,
                                     rec_dir,
                                     rec_fsync,
+                                    stream_audit_db,
                                 )
                                 .await
                                 {
@@ -166,6 +183,7 @@ async fn main() -> anyhow::Result<()> {
         let cleanup_dir = config.resolve_recording_dir();
         let retention_days = config.recording_retention_days;
         let max_size_mb = config.recording_max_size_mb;
+        let cleanup_audit_db = audit_db.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
             loop {
@@ -184,6 +202,10 @@ async fn main() -> anyhow::Result<()> {
                         tracing::error!("recording cleanup failed: {e}");
                     }
                     _ => {}
+                }
+
+                if let Err(e) = cleanup_audit_db.cleanup(retention_days, max_size_mb).await {
+                    tracing::error!("bridge audit cleanup failed: {e}");
                 }
             }
         });

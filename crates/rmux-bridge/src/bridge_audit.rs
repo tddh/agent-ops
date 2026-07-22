@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::path::Path;
 use std::sync::Arc;
 
@@ -34,6 +32,7 @@ impl BridgeAuditDb {
         Self::init_conn(conn)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn open_in_memory() -> anyhow::Result<Self> {
         let conn = rusqlite::Connection::open_in_memory()?;
         Self::init_conn(conn)
@@ -107,6 +106,7 @@ impl BridgeAuditDb {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn query(
         &self,
         event_type: Option<&str>,

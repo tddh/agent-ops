@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use anyhow::Context;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use crate::bridge_audit::{self, BridgeAuditDb};
 use crate::interactive::InteractiveSession;
 
 const CHUNK_SIZE: usize = 1024 * 1024; // 1 MB pipeline buffer
@@ -25,6 +28,7 @@ fn sanitize_path(raw: &str) -> anyhow::Result<String> {
 
 /// QUIC stream dispatcher: read stream type byte, route to handler.
 /// 0x01 = JSON protocol frames (LE32 length prefix), 0x02 = file upload, 0x03 = file download, 0x05 = port tunnel.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_quic_stream(
     send: quinn::SendStream,
     mut recv: quinn::RecvStream,
@@ -33,6 +37,7 @@ pub async fn handle_quic_stream(
     recording_enabled: bool,
     recording_dir: std::path::PathBuf,
     fsync_interval_secs: u64,
+    audit_db: Arc<BridgeAuditDb>,
 ) -> anyhow::Result<()> {
     let mut type_buf = [0u8; 1];
     recv.read_exact(&mut type_buf).await?;
@@ -41,15 +46,16 @@ pub async fn handle_quic_stream(
             let adapter = crate::proxy::QuicStreamAdapter { recv, send };
             crate::proxy::proxy_protocol_aware(adapter, &protocol_proxy).await
         }
-        0x02 => handle_upload_quic(send, recv).await,
-        0x03 => handle_download_quic(send, recv).await,
-        0x05 => handle_tunnel_quic(send, recv).await,
+        0x02 => handle_upload_quic(send, recv, audit_db).await,
+        0x03 => handle_download_quic(send, recv, audit_db).await,
+        0x05 => handle_tunnel_quic(send, recv, audit_db).await,
         0x06 => {
             crate::interactive::handle_interactive_control(
                 send,
                 recv,
                 protocol_proxy.clone(),
                 session_state.clone(),
+                audit_db,
             )
             .await
         }
@@ -62,6 +68,7 @@ pub async fn handle_quic_stream(
                 recording_enabled,
                 recording_dir,
                 fsync_interval_secs,
+                audit_db,
             )
             .await
         }
@@ -75,6 +82,7 @@ pub async fn handle_quic_stream(
 async fn handle_upload_quic(
     mut send: quinn::SendStream,
     mut recv: quinn::RecvStream,
+    audit_db: Arc<BridgeAuditDb>,
 ) -> anyhow::Result<()> {
     let mut mode_buf = [0u8; 1];
     recv.read_exact(&mut mode_buf).await?;
@@ -148,6 +156,21 @@ async fn handle_upload_quic(
     let hash: [u8; 32] = hasher.finalize().into();
     tokio::fs::rename(&tmp_path, &remote_path).await?;
 
+    audit_db
+        .log(bridge_audit::BridgeEvent {
+            event_type: "file_upload".to_string(),
+            client_addr: String::new(),
+            client_id: None,
+            session_name: None,
+            pane_id: None,
+            cols: None,
+            rows: None,
+            detail: Some(serde_json::json!({"path": remote_path, "size_bytes": total})),
+            duration_secs: None,
+            exit_code: None,
+        })
+        .await;
+
     send.write_all(&[0x00]).await?;
     send.write_all(&total.to_le_bytes()).await?;
     send.write_all(&hash).await?;
@@ -159,6 +182,7 @@ async fn handle_upload_quic(
 async fn handle_download_quic(
     mut send: quinn::SendStream,
     mut recv: quinn::RecvStream,
+    audit_db: Arc<BridgeAuditDb>,
 ) -> anyhow::Result<()> {
     let mut path_len_buf = [0u8; 2];
     recv.read_exact(&mut path_len_buf).await?;
@@ -181,13 +205,17 @@ async fn handle_download_quic(
     };
 
     if meta.is_dir() {
-        download_dir_quic(send, &remote_path).await
+        download_dir_quic(send, &remote_path, audit_db).await
     } else {
-        download_file_quic(send, &remote_path).await
+        download_file_quic(send, &remote_path, audit_db).await
     }
 }
 
-async fn download_file_quic(mut send: quinn::SendStream, remote_path: &str) -> anyhow::Result<()> {
+async fn download_file_quic(
+    mut send: quinn::SendStream,
+    remote_path: &str,
+    audit_db: Arc<BridgeAuditDb>,
+) -> anyhow::Result<()> {
     let mut file = tokio::fs::File::open(remote_path).await?;
     let file_size = file.metadata().await?.len();
 
@@ -209,11 +237,31 @@ async fn download_file_quic(mut send: quinn::SendStream, remote_path: &str) -> a
     let mut file = tokio::fs::File::open(remote_path).await?;
     tokio::io::copy(&mut file, &mut send).await?;
     send.finish()?;
+
+    audit_db
+        .log(bridge_audit::BridgeEvent {
+            event_type: "file_download".to_string(),
+            client_addr: String::new(),
+            client_id: None,
+            session_name: None,
+            pane_id: None,
+            cols: None,
+            rows: None,
+            detail: Some(serde_json::json!({"path": remote_path, "size_bytes": file_size})),
+            duration_secs: None,
+            exit_code: None,
+        })
+        .await;
+
     tracing::info!("QUIC downloaded {} ({} bytes)", remote_path, file_size);
     Ok(())
 }
 
-async fn download_dir_quic(mut send: quinn::SendStream, remote_path: &str) -> anyhow::Result<()> {
+async fn download_dir_quic(
+    mut send: quinn::SendStream,
+    remote_path: &str,
+    audit_db: Arc<BridgeAuditDb>,
+) -> anyhow::Result<()> {
     let base = std::path::Path::new(remote_path);
     let mut files: Vec<(std::path::PathBuf, String)> = Vec::new();
     collect_remote_files(base, base, &mut files, 0).await?;
@@ -248,6 +296,22 @@ async fn download_dir_quic(mut send: quinn::SendStream, remote_path: &str) -> an
     }
 
     send.finish()?;
+
+    audit_db
+        .log(bridge_audit::BridgeEvent {
+            event_type: "file_download".to_string(),
+            client_addr: String::new(),
+            client_id: None,
+            session_name: None,
+            pane_id: None,
+            cols: None,
+            rows: None,
+            detail: Some(serde_json::json!({"path": remote_path, "files": files.len()})),
+            duration_secs: None,
+            exit_code: None,
+        })
+        .await;
+
     tracing::info!(
         "QUIC downloaded directory {} ({} files)",
         remote_path,
@@ -281,6 +345,7 @@ async fn collect_remote_files(
 async fn handle_tunnel_quic(
     mut send: quinn::SendStream,
     mut recv: quinn::RecvStream,
+    audit_db: Arc<BridgeAuditDb>,
 ) -> anyhow::Result<()> {
     let mut host_len_buf = [0u8; 2];
     recv.read_exact(&mut host_len_buf).await?;
@@ -305,6 +370,21 @@ async fn handle_tunnel_quic(
     )
     .await
     .context("TCP connect timeout")??;
+
+    audit_db
+        .log(bridge_audit::BridgeEvent {
+            event_type: "tunnel_open".to_string(),
+            client_addr: String::new(),
+            client_id: None,
+            session_name: None,
+            pane_id: None,
+            cols: None,
+            rows: None,
+            detail: Some(serde_json::json!({"target": target})),
+            duration_secs: None,
+            exit_code: None,
+        })
+        .await;
 
     let (mut tcp_read, mut tcp_write) = tcp.into_split();
 
@@ -336,6 +416,21 @@ async fn handle_tunnel_quic(
     };
 
     tokio::try_join!(tcp_to_quic, quic_to_tcp)?;
+
+    audit_db
+        .log(bridge_audit::BridgeEvent {
+            event_type: "tunnel_close".to_string(),
+            client_addr: String::new(),
+            client_id: None,
+            session_name: None,
+            pane_id: None,
+            cols: None,
+            rows: None,
+            detail: Some(serde_json::json!({"target": target})),
+            duration_secs: None,
+            exit_code: None,
+        })
+        .await;
 
     tracing::info!("QUIC tunnel closed: {}", target);
     Ok(())

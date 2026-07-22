@@ -11,13 +11,13 @@ use std::sync::Arc;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::{Mutex, Notify};
 
+use crate::bridge_audit::{self, BridgeAuditDb};
 use crate::cast_recorder::{finalize_cast, CastRecorder};
 use crate::protocol::ProtocolProxy;
 
 /// Interactive session state shared between control (0x06) and data (0x07) streams.
 pub struct InteractiveSession {
     pub session_name: String,
-    #[allow(dead_code)]
     pub pane_id: String,
     pub cols: u16,
     pub rows: u16,
@@ -54,6 +54,7 @@ pub async fn handle_interactive_control(
     mut recv: RecvStream,
     proxy: Arc<ProtocolProxy>,
     session_state: Arc<Mutex<Option<InteractiveSession>>>,
+    audit_db: Arc<BridgeAuditDb>,
 ) -> Result<()> {
     let msg_type = read_u8(&mut recv).await?;
     if msg_type != 0x01 {
@@ -124,6 +125,22 @@ pub async fn handle_interactive_control(
 
     write_attached(&mut send, &scrollback).await?;
 
+    let attach_time = std::time::Instant::now();
+    audit_db
+        .log(bridge_audit::BridgeEvent {
+            event_type: "attach".to_string(),
+            client_addr: String::new(),
+            client_id: None,
+            session_name: Some(session_name.clone()),
+            pane_id: Some(pane_id.clone()),
+            cols: Some(cols),
+            rows: Some(rows),
+            detail: None,
+            duration_secs: None,
+            exit_code: None,
+        })
+        .await;
+
     loop {
         let msg_result = tokio::select! {
             r = read_u8(&mut recv) => Some(r),
@@ -178,6 +195,20 @@ pub async fn handle_interactive_control(
             }
             0x03 => {
                 tracing::info!("client detached from {}/{}", session_name, pane_id);
+                audit_db
+                    .log(bridge_audit::BridgeEvent {
+                        event_type: "detach".to_string(),
+                        client_addr: String::new(),
+                        client_id: None,
+                        session_name: Some(session_name.clone()),
+                        pane_id: Some(pane_id.clone()),
+                        cols: None,
+                        rows: None,
+                        detail: None,
+                        duration_secs: Some(attach_time.elapsed().as_secs_f64()),
+                        exit_code: None,
+                    })
+                    .await;
                 let state = session_state.lock().await;
                 if let Some(pid) = state.as_ref().and_then(|s| s.child_pid) {
                     unsafe {
@@ -196,6 +227,7 @@ pub async fn handle_interactive_control(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_interactive_data(
     mut send: SendStream,
     mut recv: RecvStream,
@@ -204,6 +236,7 @@ pub async fn handle_interactive_data(
     recording_enabled: bool,
     recording_dir: PathBuf,
     fsync_interval_secs: u64,
+    audit_db: Arc<BridgeAuditDb>,
 ) -> Result<()> {
     let (session_name, socket_path) = {
         let start = std::time::Instant::now();
@@ -323,10 +356,7 @@ pub async fn handle_interactive_data(
             std::time::SystemTime::now().hash(&mut hasher);
             let client_id = format!("{:04x}", hasher.finish() & 0xFFFF);
 
-            let filename = format!(
-                "{}_{}_{}_{client_id}.cast",
-                session_name, pane_id, epoch
-            );
+            let filename = format!("{}_{}_{}_{client_id}.cast", session_name, pane_id, epoch);
             let cast_path = date_dir.join(&filename);
 
             match CastRecorder::start(cast_path.clone(), cols, rows, fsync_interval_secs).await {
@@ -439,6 +469,21 @@ pub async fn handle_interactive_data(
     let status = child.wait().await?;
     let code = status.code().unwrap_or(-1);
     tracing::info!(exit_code = code, "rmux attach-session exited");
+
+    audit_db
+        .log(bridge_audit::BridgeEvent {
+            event_type: "exit".to_string(),
+            client_addr: String::new(),
+            client_id: None,
+            session_name: Some(session_name.clone()),
+            pane_id: Some(pane_id.clone()),
+            cols: None,
+            rows: None,
+            detail: None,
+            duration_secs: None,
+            exit_code: Some(code),
+        })
+        .await;
 
     {
         let mut state = session_state.lock().await;

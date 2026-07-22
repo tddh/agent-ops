@@ -1,11 +1,17 @@
 //! Authentication layer for incoming bridge connections.
 //! Uses constant-time comparison of a pre-shared static token.
 
+use std::sync::Arc;
+
+use crate::bridge_audit::{self, BridgeAuditDb};
+
 /// QUIC version: authenticate via bidi stream.
 pub async fn authenticate_quic(
     send: &mut quinn::SendStream,
     recv: &mut quinn::RecvStream,
     expected_token: &str,
+    audit_db: Arc<BridgeAuditDb>,
+    client_addr: String,
 ) -> anyhow::Result<()> {
     let mut preamble = [0u8; 4];
     recv.read_exact(&mut preamble).await?;
@@ -27,10 +33,38 @@ pub async fn authenticate_quic(
     let received_token = std::str::from_utf8(&token_buf)?;
 
     if !constant_time_eq(received_token.as_bytes(), expected_token.as_bytes()) {
+        audit_db
+            .log(bridge_audit::BridgeEvent {
+                event_type: "auth_failure".to_string(),
+                client_addr,
+                client_id: None,
+                session_name: None,
+                pane_id: None,
+                cols: None,
+                rows: None,
+                detail: Some(serde_json::json!({"token_len": token_len})),
+                duration_secs: None,
+                exit_code: None,
+            })
+            .await;
         send.write_all(b"ERR auth failed\n").await?;
         anyhow::bail!("authentication failed");
     }
 
+    audit_db
+        .log(bridge_audit::BridgeEvent {
+            event_type: "auth_success".to_string(),
+            client_addr,
+            client_id: None,
+            session_name: None,
+            pane_id: None,
+            cols: None,
+            rows: None,
+            detail: None,
+            duration_secs: None,
+            exit_code: None,
+        })
+        .await;
     send.write_all(b"OK\n").await?;
     tracing::info!("QUIC client authenticated successfully");
     Ok(())

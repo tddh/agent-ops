@@ -74,7 +74,6 @@ impl BridgeConfig {
         })
     }
 
-    #[allow(dead_code)]
     pub fn resolve_audit_db_path(&self) -> PathBuf {
         self.bridge_audit_db.clone().unwrap_or_else(|| {
             std::env::current_exe()
