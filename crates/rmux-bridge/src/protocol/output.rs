@@ -219,7 +219,7 @@ impl ProtocolProxy {
             Ok(s) => s,
             Err(e) => return json!({"ok": false, "error": e.to_string()}),
         };
-        let pane = match self.rmux.get_pane_by_id(&sn, pane_id).await {
+        let pane = match self.rmux_long.get_pane_by_id(&sn, pane_id).await {
             Ok(p) => p,
             Err(e) => return json!({"ok": false, "error": e.to_string()}),
         };
@@ -370,10 +370,44 @@ impl ProtocolProxy {
             Ok(s) => s,
             Err(e) => return json!({"ok": false, "error": e.to_string()}),
         };
-        let pane = match self.rmux.get_pane_by_id(&sn, pane_id).await {
+        let pane = match self.rmux_long.get_pane_by_id(&sn, pane_id).await {
             Ok(p) => p,
             Err(e) => return json!({"ok": false, "error": e.to_string()}),
         };
+
+        // Dead-pane fast path: process already exited, no exit event will
+        // fire. Grab scrollback + exit state immediately.
+        if let Ok(info) = pane.info().await {
+            if let Some(p) = info.panes.first() {
+                let is_dead = matches!(p.process, rmux_sdk::PaneProcessState::Exited)
+                    || p.exit_state.is_some();
+                if is_dead {
+                    let snapshot = pane.snapshot().await;
+                    let text = snapshot
+                        .map(|s| s.visible_text().to_string())
+                        .unwrap_or_default();
+                    let (exit_code, signal, message) = match &p.exit_state {
+                        Some(state) => (state.code, state.signal, state.message.clone()),
+                        None => (None, None, None),
+                    };
+                    let mut resp = json!({
+                        "ok": true,
+                        "output": general_purpose::STANDARD.encode(text.as_bytes()),
+                        "collected_bytes": text.len(),
+                        "exit_code": exit_code,
+                        "signal": signal,
+                        "truncated": false,
+                        "lagged": false,
+                        "missed_events": 0,
+                    });
+                    if let Some(ref msg) = message {
+                        resp["message"] = json!(msg);
+                    }
+                    return resp;
+                }
+            }
+        }
+
         let start_kind = if starting_at == "oldest" {
             PaneOutputStart::Oldest
         } else {

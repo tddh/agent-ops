@@ -1,6 +1,7 @@
 #![recursion_limit = "512"]
 mod audit;
 mod audit_cli;
+mod error;
 mod files;
 mod handler;
 mod router;

@@ -36,13 +36,33 @@ pub async fn run_mcp_stdio_loop(
                 let tool_name = request["params"]["name"].as_str().unwrap_or("");
                 let args = request["params"]["arguments"].clone();
                 match tools::execute_tool(&ctx, tool_name, args).await {
-                    Ok(result) => json_rpc_response(
-                        id,
-                        &json!({
+                    Ok(mut result) => {
+                        crate::error::enrich_error(&mut result);
+                        let is_error = result.get("ok").and_then(Value::as_bool) == Some(false);
+                        let mut payload = json!({
                             "content": [{ "type": "text", "text": result.to_string() }]
-                        }),
-                    ),
-                    Err(e) => json_rpc_error(id, -32000, &format!("Tool error: {e}")),
+                        });
+                        if is_error {
+                            payload["isError"] = json!(true);
+                        }
+                        json_rpc_response(id, &payload)
+                    }
+                    Err(e) => {
+                        // 未知工具是协议层错误（MCP 规范 -32602）；其余业务失败
+                        // 统一走 result 信封 + isError，保证错误内容进入模型上下文。
+                        if e.to_string().starts_with("unknown tool") {
+                            json_rpc_error(id, -32602, &format!("{e:#}"))
+                        } else {
+                            let result = crate::error::error_result(&e);
+                            json_rpc_response(
+                                id,
+                                &json!({
+                                    "content": [{ "type": "text", "text": result.to_string() }],
+                                    "isError": true,
+                                }),
+                            )
+                        }
+                    }
                 }
             }
             "initialize" => {
@@ -57,7 +77,7 @@ pub async fn run_mcp_stdio_loop(
                         "protocolVersion": "2024-11-05",
                         "capabilities": { "tools": {} },
                         "serverInfo": { "name": "agent-ops-mcp", "version": env!("CARGO_PKG_VERSION") },
-                        "instructions": "You are an AI agent managing remote Linux hosts via agent-ops. 你是通过 agent-ops 运维远程主机的 AI Agent。\n\n## Rules\n1. If a host is in the agent-ops registry (`host_list`), ALL operations MUST use agent-ops tools. NEVER run ssh/scp/rsync directly.\n2. Default session: `\"agent-ops\"`. Always `session_attach` first; `session_create` if not found.\n3. File transfer: `file_upload` / `file_download`. Commands: `exec` for one-shot (auto-waits, default 200 lines / 600s=10min timeout, set `max_lines=0` for everything), `send_keys` for interactive programs.\n4. Use `wait_for_text` to block until a pattern appears — do NOT poll `capture_pane` in a loop.\n5. For long-running commands (tail -f, builds), use `stream_pane` for incremental output instead of polling `capture_pane`. `session_attach`/`session_detach` only check existence, they don't attach/detach.\n\n## Workflow\n`host_list` → `session_attach host=<h> session_name=\"agent-ops\"` (or `session_create`) → `exec`/`send_keys` → `capture_pane`/`wait_for_text` → `close_pane` to clean up.\n- Default pane after session_create: `%0`.\n- `exec` supports `clear_screen: true` and `timeout_ms` for long commands.\n- After closing a pane: `respawn_pane` to restart the shell.\n- `cmd_escape` for direct rmux CLI access (advanced)."
+                        "instructions": "You are an AI agent managing remote Linux hosts via agent-ops. 你是通过 agent-ops 运维远程主机的 AI Agent。\n\n## Rules\n1. If a host is in the agent-ops registry (`host_list`), ALL operations MUST use agent-ops tools. NEVER run ssh/scp/rsync directly.\n2. Default session: `\"agent-ops\"`. Always `session_attach` first; `session_create` if not found.\n3. File transfer: `file_upload` / `file_download`. Commands: `exec` for one-shot (auto-waits, default 200 lines / 600s=10min timeout, set `max_lines=0` for everything), `send_keys` for interactive programs.\n4. Use `wait_for_text` to block until a pattern appears — do NOT poll `capture_pane` in a loop.\n5. For long-running commands (tail -f, builds), use `stream_pane` for incremental output instead of polling `capture_pane`. `session_attach`/`session_detach` only check existence, they don't attach/detach.\n6. On failure (`ok:false`), branch on `error_code` (stable contract) and follow `recovery_hint`; `retryable:false` means never blindly retry (e.g. exec TIMEOUT — the command may still be running remotely).\n\n## Workflow\n`host_list` → `session_attach host=<h> session_name=\"agent-ops\"` (or `session_create`) → `exec`/`send_keys` → `capture_pane`/`wait_for_text` → `close_pane` to clean up.\n- Default pane after session_create: `%0`.\n- `exec` supports `clear_screen: true` and `timeout_ms` for long commands.\n- After closing a pane: `respawn_pane` to restart the shell.\n- `cmd_escape` for direct rmux CLI access (advanced)."
                     }),
                 )
             }

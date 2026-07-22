@@ -56,12 +56,17 @@ class Mcp:
         except (TimeoutError, RuntimeError) as e:
             return {"ok": False, "_rpc_error": str(e)}
         if "error" in resp:
-            return {"ok": False, "_rpc_error": resp["error"]["message"]}
-        text = resp["result"]["content"][0]["text"]
+            return {"ok": False, "_rpc_error": resp["error"]["message"],
+                    "_rpc_code": resp["error"]["code"]}
+        result = resp["result"]
+        text = result["content"][0]["text"]
         try:
-            return json.loads(text)
+            out = json.loads(text)
         except json.JSONDecodeError:
-            return {"ok": None, "_raw": text}
+            out = {"ok": None, "_raw": text}
+        if result.get("isError"):
+            out["_is_error"] = True
+        return out
 
     def close(self):
         self.p.stdin.close()
@@ -174,6 +179,9 @@ def host_flow(m, host, tunnel_port):
     # 10. error path: bad pane
     r = m.tool("exec", {**base, "pane_id": "%99", "command": "true", "timeout_ms": 8000})
     check(f"{pfx}: exec bad pane -> error", not ok(r), str(r))
+    check(f"{pfx}: bad pane -> PANE_NOT_FOUND envelope",
+          r.get("error_code") == "PANE_NOT_FOUND" and bool(r.get("recovery_hint"))
+          and r.get("_is_error") is True, str(r))
 
 
 def main():

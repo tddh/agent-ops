@@ -475,7 +475,13 @@ where
         }
     }
 
-    AwaitOutcome::Done(parse_exec_output(full_text, last_state, last_cursor, sent, max_lines))
+    AwaitOutcome::Done(parse_exec_output(
+        full_text,
+        last_state,
+        last_cursor,
+        sent,
+        max_lines,
+    ))
 }
 
 /// capture pane 尾部 window 行（start_line 负值，走 scrollback）。
@@ -514,7 +520,15 @@ async fn fetch_until_marker<S>(
     sent: &SentCommand,
     mut text: String,
     mut window: i64,
-) -> Result<(String, i64, Option<serde_json::Value>, Option<serde_json::Value>), ()>
+) -> Result<
+    (
+        String,
+        i64,
+        Option<serde_json::Value>,
+        Option<serde_json::Value>,
+    ),
+    (),
+>
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
 {

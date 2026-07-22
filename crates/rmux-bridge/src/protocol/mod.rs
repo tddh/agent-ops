@@ -6,6 +6,7 @@ use anyhow::Result;
 use regex::Regex;
 use rmux_sdk::PaneId;
 use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 static ANSI_RE: OnceLock<Regex> = OnceLock::new();
@@ -20,6 +21,10 @@ pub struct PaneOutputStream {
 /// protocol message type used by the MCP server.
 pub struct ProtocolProxy {
     rmux: rmux_sdk::Rmux,
+    /// Facade with no SDK-level timeout, for long-wait operations
+    /// (collect_until_exit, wait_for_bytes) where the caller's timeout_ms
+    /// governs the deadline via bridge-side tokio::time::timeout.
+    rmux_long: rmux_sdk::Rmux,
     socket_path: String,
 }
 
@@ -30,8 +35,14 @@ impl ProtocolProxy {
             .unix_socket(socket_path)
             .connect()
             .await?;
+        let rmux_long = rmux_sdk::Rmux::builder()
+            .unix_socket(socket_path)
+            .default_timeout(Duration::MAX)
+            .connect()
+            .await?;
         Ok(Self {
             rmux,
+            rmux_long,
             socket_path: socket_path.to_string(),
         })
     }

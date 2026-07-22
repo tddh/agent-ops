@@ -728,7 +728,7 @@ pub fn tools_definition() -> Value {
             },
             {
                 "name": "collect_until_exit",
-                "description": "Collect all pane output from now until the process exits. The pane process MUST already be running — use spawn_command or shell_command to start it first. More efficient than sentinel markers for large-output commands, as it streams directly without repeated capture_pane calls. Returns collected bytes and exit info. Default max is 1MB, default timeout is 60s. Use starting_at='oldest' to include scrollback history. ⚠️ On timeout, the remote task is ABORTED (process killed). Unlike exec where the command keeps running after timeout. For fire-and-forget long tasks, use shell_command + wait_for_text instead.",
+                "description": "Collect all pane output from now until the process exits. The pane process MUST already be running — use spawn_command or shell_command to start it first. More efficient than sentinel markers for large-output commands, as it streams directly without repeated capture_pane calls. Returns collected bytes and exit info. Default max is 1MB, default timeout is 60s. Use starting_at='oldest' to include scrollback history. ⚠️ On timeout, the collection is cancelled (partial output lost), but the remote process keeps running — use capture_pane to check progress or wait_for_text to wait for completion. Unlike exec where the command keeps running after timeout AND output is preserved. For fire-and-forget long tasks, use shell_command + wait_for_text instead.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -820,7 +820,7 @@ pub fn tools_definition() -> Value {
             },
             {
                 "name": "wait_for_bytes",
-                "description": "Wait for specific raw bytes to appear in the pane output stream. Unlike wait_for_text (which only matches visible text after ANSI processing), this matches the raw byte stream including ANSI escape sequences and control characters. Bytes must be provided as a base64-encoded string. Use this when you need to detect specific terminal sequences (e.g., cursor movements, color changes) that are not visible in text. Default timeout is 30 seconds.",
+                "description": "Wait for specific raw bytes to appear in the pane output stream. Unlike wait_for_text (which only matches visible text after ANSI processing), this matches the raw byte stream including ANSI escape sequences and control characters. Bytes must be provided as a base64-encoded string. Use this when you need to detect specific terminal sequences (e.g., cursor movements, color changes) that are not visible in text. ⚠️ timeout_ms is currently not enforced at the bridge level — the wait is effectively unbounded until the bytes appear.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {

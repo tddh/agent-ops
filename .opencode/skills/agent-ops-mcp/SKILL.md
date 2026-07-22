@@ -204,7 +204,7 @@ wait_stable(host, session_name, pane_id)
 
 ## exec 安全检查
 
-`exec` 工具在执行命令前会检测终端状态。如果终端不在 `ready` 状态，exec 会拒绝执行并返回 `refused: true`。
+`exec` 工具在执行命令前会检测终端状态。如果终端不在 `ready` 状态，exec 会拒绝执行并返回 `refused: true` + `error_code: "REFUSED_STATE"`。
 
 ### 为什么需要安全检查
 
@@ -274,7 +274,7 @@ batch_exec(hosts=["tf01", "dns-backup"], command="hostname")
 
 > ⚠️ **exec 超时不杀进程**：exec 的 timeout 只是客户端的等待上限，命令仍在远端 rmux pane 中运行。超时后可以用 `capture_pane` 查看进度，`wait_for_text` 等完成标志，或 `send_keys("\x03")` 中断。不要因为超时就重跑。
 >
-> ⚠️ **collect_until_exit 超时不同**：collect_until_exit 超时后会 **abort 远端任务**，进程被 kill。不要用于 fire-and-forget 场景。
+> ⚠️ **collect_until_exit 超时不同**：collect_until_exit 超时后**收集被取消（已收集的字节丢失）**，但远端进程**继续运行**。用 `capture_pane` 查看进度或 `wait_for_text` 等完成标志。不要用于 fire-and-forget 场景。
 
 ### 实时监控长命令输出（stream_pane）
 ```
@@ -324,7 +324,7 @@ split_pane_with(
 ### 收集大输出命令结果（collect_until_exit）
 ```
 # 适合大输出命令
-# ⚠️ 超时后会 abort 远端任务！不要用于 fire-and-forget 长任务
+# ⚠️ 超时后收集被取消（已收集字节丢失），但远端进程继续运行。不要用于 fire-and-forget 长任务
 1. spawn_command(host, session_name, pane_id, command="find / -name '*.log'")
 2. collect_until_exit(host, session_name, pane_id, max_bytes=10485760)
    → 流式收集所有输出直到进程退出
@@ -352,20 +352,42 @@ host_capabilities(host="tf01", check="stream.control")
 
 ## 错误处理
 
-| 错误 | 原因 | 解决方案 |
-|------|------|---------|
-| `pane id %X was not found` | pane_id 错误或 pane 已关闭 | `list_window_panes` 确认当前 pane_id |
-| `session not found` | 会话不存在 | `session_create` 创建会话 |
-| `connection refused` | bridge 未运行 | 检查 `systemctl status rmux-bridge` |
-| `TCP connect timeout` | 主机离线或网络不通 | 确认主机在线、bridge 端口可达 |
-| `authentication failed` | token 不匹配 | 检查 `hosts.yaml` 中的 `bridge_token` |
-| `recv: connection lost` | bridge 重启或网络中断 | 等待后重试 |
-| `pane still active` | spawn/shell_command 时 pane 非空闲 | 先 `close_pane` 或换 pane |
-| `timeout` | 命令执行超时 | exec: 增大 `timeout_ms` 或检查命令是否卡住（⚠️ 超时后命令仍在运行！别重跑，用 capture_pane 补捞）。collect_until_exit: 超时后任务被 abort，需重跑。 |
-| `path traversal rejected` | 路径包含 `..` | 使用不含 `..` 的绝对路径或相对路径 |
-| `tunnel target not in allowed list` | 隧道目标不在白名单中 | 检查 `hosts.yaml` 中的 `allowed_tunnel_targets` 配置 |
-| `host not found` | 主机名不在 registry 中 | `host_list` 检查可用主机 |
-| 修改 `hosts.yaml` 后主机不生效 | 未重载配置 | 调用 `reload_config` 工具或 `kill -HUP <pid>` |
+工具调用失败时返回结构化信封（MCP `isError: true`）：
+
+```json
+{
+  "ok": false,
+  "error": "pane id %99 was not found",
+  "error_code": "PANE_NOT_FOUND",
+  "recovery_hint": "list_window_panes 确认当前 pane_id（pane 可能已关闭）",
+  "retryable": false
+}
+```
+
+**处理规则**：
+1. **优先按 `error_code` 分支**，不要匹配 `error` 字符串（措辞可能变，码是稳定契约）
+2. **`recovery_hint` 就是下一步动作**，按它执行即可，无需查本表
+3. **`retryable: false` 的错误禁止盲目重试**（如 TIMEOUT——命令可能还在远端运行）；`true`（网络类）可等待后重试
+
+| error_code | 典型 `error` 消息 | 原因 | 解决方案 |
+|-----------|------|------|---------|
+| `PANE_NOT_FOUND` | `pane id %X was not found` | pane_id 错误或 pane 已关闭 | `list_window_panes` 确认当前 pane_id |
+| `SESSION_NOT_FOUND` | `session not found` | 会话不存在 | `session_create` 创建会话 |
+| `BRIDGE_UNREACHABLE` | `connection refused` | bridge 未运行 | 检查 `systemctl status rmux-bridge` |
+| `TIMEOUT`（连接类） | `TCP connect timeout` | 主机离线或网络不通 | 确认主机在线、bridge 端口可达 |
+| `AUTH_FAILED` | `authentication failed` | token 不匹配 | 检查 `hosts.yaml` 中的 `bridge_token` |
+| `CONNECTION_LOST` | `recv: connection lost` | bridge 重启或网络中断 | 等待后重试 |
+| `PANE_BUSY` | `pane still active` | spawn/shell_command 时 pane 非空闲 | 先 `close_pane` 或换 pane |
+| `TIMEOUT`（执行类） | `timeout waiting for sentinel...` | 命令执行超时 | exec: 增大 `timeout_ms` 或检查命令是否卡住（⚠️ 超时后命令仍在运行！别重跑，用 capture_pane 补捞）。collect_until_exit: 超时后收集被取消（已收集字节丢失），但远端进程继续运行，用 capture_pane 或 wait_for_text 继续跟进。 |
+| `PATH_TRAVERSAL` | `path traversal rejected` | 路径包含 `..` | 使用不含 `..` 的绝对路径或相对路径 |
+| `TUNNEL_DENIED` | `tunnel target not in allowed list` | 隧道目标不在白名单中 | 检查 `hosts.yaml` 中的 `allowed_tunnel_targets` 配置 |
+| `HOST_NOT_FOUND` | `host not found` | 主机名不在 registry 中 | `host_list` 检查可用主机 |
+| `REFUSED_STATE` | （exec 安全拒绝，附具体建议） | 终端非 ready 状态 | 按 `error` 中的建议恢复终端状态后重试 |
+| `INVALID_PARAMS` | `missing 'pane_id'` 等 | 缺少必填参数 | 对照该工具的 inputSchema.required 补全 |
+| `SESSION_EXISTS` | `session already exists` | 同名会话已存在 | 直接 `session_attach` 或换个名称 |
+| `WINDOW_NOT_FOUND` | `window not found` | 窗口不存在 | `window_info` / `select_window` 确认窗口 |
+| `TUNNEL_NOT_FOUND` | `tunnel not found` | 隧道 ID 不存在 | `tunnel_list` 确认隧道 ID |
+| — | 修改 `hosts.yaml` 后主机不生效 | 未重载配置 | 调用 `reload_config` 工具或 `kill -HUP <pid>` |
 
 ## 最佳实践
 
@@ -464,7 +486,7 @@ capture_region(host, session_name, pane_id)
 ├── 长程任务（ansible-playbook, terraform, 编译）→ `shell_command` + `wait_for_text` / `stream_pane`
 ├── 不会退出（tail -f, ping）→ `send_keys` + `capture_pane`
 ├── 大输出命令（find, du）→ `spawn_command` + `collect_until_exit`
-│   ⚠️ collect_until_exit 超时会 abort 任务
+│   ⚠️ 超时后收集被取消，远端进程继续运行
 ├── 需要实时监控输出 → `send_keys` + `stream_pane` 循环
 ├── 多台主机 → `batch_exec`
 └── 需要分屏并行 → `split_pane_with`

@@ -11,6 +11,44 @@
 - `timeout_ms` — 超时毫秒数，默认 30000（`exec` / `batch_exec` 为 600000）
 - 返回值统一为 JSON：`{"ok": true/false, ...}`
 
+### 错误返回结构
+
+业务失败（主机不存在、pane 不存在、超时、安全拒绝等）统一返回 result 信封，并标记 MCP `isError: true`：
+
+```json
+{
+  "ok": false,
+  "error": "pane id %99 was not found",
+  "error_code": "PANE_NOT_FOUND",
+  "recovery_hint": "list_window_panes 确认当前 pane_id（pane 可能已关闭）",
+  "retryable": false
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `error` | 原始错误字符串（人读） |
+| `error_code` | 稳定错误码（Agent 分支用），见下表 |
+| `recovery_hint` | 建议的恢复动作 |
+| `retryable` | 是否可安全重试同一调用 |
+
+| error_code | 含义 |
+|-----------|------|
+| `HOST_NOT_FOUND` | 主机名不在注册表，用 `host_list` 核对 |
+| `INVALID_PARAMS` | 缺少必填参数，对照该工具的 inputSchema |
+| `SESSION_NOT_FOUND` / `SESSION_EXISTS` | 会话不存在 / 已存在 |
+| `PANE_NOT_FOUND` / `PANE_BUSY` | pane 不存在 / 非空闲 |
+| `WINDOW_NOT_FOUND` / `TUNNEL_NOT_FOUND` | 窗口 / 隧道不存在 |
+| `PATH_TRAVERSAL` | 路径含 `..` 被拒绝 |
+| `TUNNEL_DENIED` | 隧道目标不在 `allowed_tunnel_targets` 白名单 |
+| `AUTH_FAILED` | bridge token 不匹配 |
+| `BRIDGE_UNREACHABLE` / `CONNECTION_LOST` | bridge 未运行 / 连接中断（可重试） |
+| `TIMEOUT` | 超时（exec 超时不杀进程，先 capture_pane 看进度再决定，勿盲目重跑） |
+| `REFUSED_STATE` | exec 安全检查拒绝（终端非 ready），`error` 含具体恢复建议 |
+| `UNKNOWN` | 未分类错误，看 `error` 详情 |
+
+未知工具名按 MCP 规范返回 JSON-RPC `-32602`；未知方法返回 `-32601`。
+
 ---
 
 ## 主机管理
@@ -222,11 +260,11 @@
 | `pane_id` | string | ✅ | |
 | `bytes` | string | ✅ | base64 编码的目标字节串 |
 | `only_new` | boolean | | 仅匹配新数据（跳过历史），默认 false |
-| `timeout_ms` | number | | 默认 30000 |
+| `timeout_ms` | number | | 默认 30000（⚠️ 当前 bridge 侧未强制，实际为无限等待）|
 
 **返回** `{"ok": true, "found": true}`
 
-超时：`{"ok": false, "found": false, "error": "..."}`
+超时（当 bridge 侧实现后）：`{"ok": false, "found": false, "error": "..."}`
 
 ---
 
@@ -392,7 +430,7 @@
 
 **返回** `{"ok": true, "output": "<base64>", "collected_bytes": 4096, "exit_code": 0, "signal": null, "truncated": false, "duration_ms": 1234}`
 
-> ⚠️ **超时行为**：超时后将**中止（abort）远端任务**，进程会被终止。这与 `exec` 不同 — `exec` 超时后命令仍在运行，session 保留。如果你需要"fire and forget"式的长时间执行，请用 `shell_command` + 后期 `capture_pane`/`wait_for_text`，而不是 `collect_until_exit`。
+> ⚠️ **超时行为**：超时后**收集被取消（已收集的字节丢失）**，但远端进程**继续运行**（与 `exec` 类似，命令不会被杀）。可用 `capture_pane` 查看进度或 `wait_for_text` 等完成标志。如果你需要"fire and forget"式的长时间执行且保留输出，请用 `shell_command` + 后期 `capture_pane`/`wait_for_text`，而不是 `collect_until_exit`。
 
 ---
 

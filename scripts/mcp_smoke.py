@@ -42,12 +42,17 @@ class Mcp:
     def tool(self, name, args):
         resp = self.rpc("tools/call", {"name": name, "arguments": args})
         if "error" in resp:
-            return {"ok": False, "_rpc_error": resp["error"]["message"]}
-        text = resp["result"]["content"][0]["text"]
+            return {"ok": False, "_rpc_error": resp["error"]["message"],
+                    "_rpc_code": resp["error"]["code"]}
+        result = resp["result"]
+        text = result["content"][0]["text"]
         try:
-            return json.loads(text)
+            out = json.loads(text)
         except json.JSONDecodeError:
-            return {"ok": None, "_raw": text}
+            out = {"ok": None, "_raw": text}
+        if result.get("isError"):
+            out["_is_error"] = True
+        return out
 
     def close(self):
         self.p.stdin.close()
@@ -86,7 +91,7 @@ def main():
     check("unknown method -> -32601", r.get("error", {}).get("code") == -32601, str(r))
 
     r = m.tool("no_such_tool", {})
-    check("unknown tool -> rpc error", "_rpc_error" in r, str(r))
+    check("unknown tool -> -32602", r.get("_rpc_code") == -32602, str(r))
 
     r = m.tool("host_list", {})
     check("host_list ok", "hosts" in r, str(r)[:300])
@@ -95,7 +100,11 @@ def main():
 
     r = m.tool("exec", {"host": "nonexistent-host", "session_name": "agent-ops",
                         "pane_id": "%0", "command": "true"})
-    check("exec bad host -> error", r.get("ok") is False or "_rpc_error" in r, str(r)[:300])
+    check("exec bad host -> structured error", r.get("ok") is False and "_rpc_error" not in r, str(r)[:300])
+    check("exec bad host -> HOST_NOT_FOUND", r.get("error_code") == "HOST_NOT_FOUND", str(r)[:300])
+    check("exec bad host -> hint+retryable+isError",
+          bool(r.get("recovery_hint")) and r.get("retryable") is False and r.get("_is_error") is True,
+          str(r)[:300])
 
     m.close()
 
