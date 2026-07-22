@@ -1,0 +1,461 @@
+//! Asciinema v2 format PTY session recorder.
+//!
+//! Events flow through a bounded mpsc channel (capacity 4096) to a dedicated
+//! writer tokio task. If the channel is full, `try_send` drops events
+//! (non-blocking, never blocks the PTY data path).
+
+// This module is not yet wired into the binary's main flow; it will be
+// integrated by subsequent tasks in the audit trail system.
+#![allow(dead_code)]
+
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use sha2::{Digest, Sha256};
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::{mpsc, oneshot};
+
+/// Channel capacity for cast events.
+const CHANNEL_CAPACITY: usize = 4096;
+
+/// fsync threshold: bytes written since last sync.
+const FSYNC_BYTE_THRESHOLD: u64 = 64 * 1024; // 64 KB
+
+/// Events that can be recorded into a cast file.
+pub enum CastEvent {
+    Output(Vec<u8>),
+    Input(Vec<u8>),
+    Exit(i32),
+}
+
+/// Metadata computed when a cast recording finishes.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CastMeta {
+    pub sha256: String,
+    pub size_bytes: u64,
+    pub duration_secs: f64,
+}
+
+/// Asciinema v2 PTY session recorder.
+///
+/// Recording is non-blocking: `record_output` / `record_input` use `try_send`
+/// and silently drop events when the internal channel is full.
+pub struct CastRecorder {
+    tx: mpsc::Sender<CastEvent>,
+    path: PathBuf,
+    done_rx: Option<oneshot::Receiver<Option<CastMeta>>>,
+}
+
+impl CastRecorder {
+    /// Start a new cast recording at `path`.
+    ///
+    /// Spawns a dedicated writer task that owns the file handle.
+    pub async fn start(
+        path: PathBuf,
+        width: u16,
+        height: u16,
+        fsync_interval_secs: u64,
+    ) -> anyhow::Result<Self> {
+        let file = File::create(&path).await?;
+        let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let (done_tx, done_rx) = oneshot::channel();
+
+        tokio::spawn(writer_task(
+            file,
+            rx,
+            done_tx,
+            width,
+            height,
+            fsync_interval_secs,
+        ));
+
+        Ok(Self {
+            tx,
+            path,
+            done_rx: Some(done_rx),
+        })
+    }
+
+    /// Record PTY output data. Non-blocking; drops event if channel is full.
+    pub fn record_output(&self, data: &[u8]) {
+        let _ = self.tx.try_send(CastEvent::Output(data.to_vec()));
+    }
+
+    /// Record PTY input data. Non-blocking; drops event if channel is full.
+    pub fn record_input(&self, data: &[u8]) {
+        let _ = self.tx.try_send(CastEvent::Input(data.to_vec()));
+    }
+
+    /// Finish recording: sends the exit event, waits for the writer task to
+    /// flush and compute the sha256, returns `CastMeta`.
+    pub async fn finish(mut self, exit_code: i32) -> Option<CastMeta> {
+        // Send exit event with blocking send to guarantee delivery.
+        let _ = self.tx.send(CastEvent::Exit(exit_code)).await;
+        // Drop the sender so the writer task sees channel close after Exit.
+        drop(self.tx);
+
+        // Wait for the writer task to signal completion.
+        let done_rx = self.done_rx.take()?;
+        done_rx.await.ok().flatten()
+    }
+
+    /// The file path of this cast recording.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// The dedicated writer task. Owns the file, processes events, and signals
+/// completion via `done_tx`.
+async fn writer_task(
+    mut file: File,
+    mut rx: mpsc::Receiver<CastEvent>,
+    done_tx: oneshot::Sender<Option<CastMeta>>,
+    width: u16,
+    height: u16,
+    fsync_interval_secs: u64,
+) {
+    let start = Instant::now();
+    let mut hasher = Sha256::new();
+    let mut total_bytes: u64 = 0;
+    let mut bytes_since_sync: u64 = 0;
+    let mut last_sync = Instant::now();
+    let sync_interval = std::time::Duration::from_secs(fsync_interval_secs);
+
+    // Write header line.
+    let timestamp = chrono::Utc::now().timestamp();
+    let header = serde_json::json!({
+        "version": 2,
+        "width": width,
+        "height": height,
+        "timestamp": timestamp,
+        "env": {
+            "TERM": "xterm-256color",
+            "SHELL": "/bin/bash"
+        }
+    });
+    let header_line = format!("{}\n", header);
+    if write_and_track(
+        &mut file,
+        &mut hasher,
+        &mut total_bytes,
+        &mut bytes_since_sync,
+        header_line.as_bytes(),
+    )
+    .await
+    .is_err()
+    {
+        let _ = done_tx.send(None);
+        return;
+    }
+
+    // Event loop: process events until Exit or channel close.
+    let mut exit_seen = false;
+    loop {
+        // Check time-based fsync.
+        if last_sync.elapsed() >= sync_interval && bytes_since_sync > 0 {
+            let _ = file.sync_all().await;
+            bytes_since_sync = 0;
+            last_sync = Instant::now();
+        }
+
+        match rx.recv().await {
+            Some(CastEvent::Output(data)) => {
+                let elapsed = start.elapsed().as_secs_f64();
+                let line = format_event_line(elapsed, "o", &data);
+                if write_and_track(
+                    &mut file,
+                    &mut hasher,
+                    &mut total_bytes,
+                    &mut bytes_since_sync,
+                    line.as_bytes(),
+                )
+                .await
+                .is_err()
+                {
+                    break;
+                }
+            }
+            Some(CastEvent::Input(data)) => {
+                let elapsed = start.elapsed().as_secs_f64();
+                let line = format_event_line(elapsed, "i", &data);
+                if write_and_track(
+                    &mut file,
+                    &mut hasher,
+                    &mut total_bytes,
+                    &mut bytes_since_sync,
+                    line.as_bytes(),
+                )
+                .await
+                .is_err()
+                {
+                    break;
+                }
+            }
+            Some(CastEvent::Exit(code)) => {
+                let elapsed = start.elapsed().as_secs_f64();
+                let line = format!("[{}, \"exit\", {}]\n", elapsed, code);
+                if write_and_track(
+                    &mut file,
+                    &mut hasher,
+                    &mut total_bytes,
+                    &mut bytes_since_sync,
+                    line.as_bytes(),
+                )
+                .await
+                .is_err()
+                {
+                    break;
+                }
+                exit_seen = true;
+                break;
+            }
+            None => {
+                // Channel closed without explicit Exit.
+                break;
+            }
+        }
+
+        // Byte-threshold fsync.
+        if bytes_since_sync >= FSYNC_BYTE_THRESHOLD {
+            let _ = file.sync_all().await;
+            bytes_since_sync = 0;
+            last_sync = Instant::now();
+        }
+    }
+
+    // Final flush and sync.
+    let _ = file.flush().await;
+    let _ = file.sync_all().await;
+
+    let duration_secs = start.elapsed().as_secs_f64();
+    let hash = hasher.finalize();
+    let sha256 = hex::encode(hash);
+
+    let meta = if exit_seen || total_bytes > 0 {
+        Some(CastMeta {
+            sha256,
+            size_bytes: total_bytes,
+            duration_secs,
+        })
+    } else {
+        None
+    };
+
+    let _ = done_tx.send(meta);
+}
+
+/// Write data to file, update hasher and byte counters.
+async fn write_and_track(
+    file: &mut File,
+    hasher: &mut Sha256,
+    total_bytes: &mut u64,
+    bytes_since_sync: &mut u64,
+    data: &[u8],
+) -> std::io::Result<()> {
+    file.write_all(data).await?;
+    hasher.update(data);
+    *total_bytes += data.len() as u64;
+    *bytes_since_sync += data.len() as u64;
+    Ok(())
+}
+
+/// Format an asciinema v2 event line: `[elapsed, "o"|"i", "data"]\n`
+fn format_event_line(elapsed: f64, kind: &str, data: &[u8]) -> String {
+    // Use serde_json to properly escape the data string.
+    let data_str = String::from_utf8_lossy(data);
+    let escaped = serde_json::to_string(&data_str).unwrap_or_else(|_| "\"\"".to_string());
+    format!("[{}, \"{}\", {}]\n", elapsed, kind, escaped)
+}
+
+/// Write a `.meta` sidecar JSON file next to the cast file and (on Linux)
+/// set the append-only attribute via `chattr +a`.
+pub async fn finalize_cast(cast_path: &Path, meta: &CastMeta) -> anyhow::Result<()> {
+    let meta_path = cast_path.with_extension("cast.meta");
+
+    let closed_at = chrono::Utc::now().to_rfc3339();
+    let meta_json = serde_json::json!({
+        "sha256": meta.sha256,
+        "synced": false,
+        "closed_at": closed_at,
+        "duration_secs": meta.duration_secs,
+        "size_bytes": meta.size_bytes,
+    });
+
+    let content = serde_json::to_string_pretty(&meta_json)?;
+    tokio::fs::write(&meta_path, content.as_bytes()).await?;
+
+    // Best-effort: set append-only attribute on Linux.
+    set_append_only(&meta_path);
+
+    Ok(())
+}
+
+/// Set the append-only flag (`FS_APPEND_FL`) on a file. Linux only, best-effort.
+#[cfg(target_os = "linux")]
+fn set_append_only(path: &Path) {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    // FS_IOC_GETFLAGS / FS_IOC_SETFLAGS ioctl numbers and FS_APPEND_FL flag.
+    const FS_IOC_GETFLAGS: libc::c_ulong = 0x8008_6601;
+    const FS_IOC_SETFLAGS: libc::c_ulong = 0x4008_6602;
+    const FS_APPEND_FL: libc::c_int = 0x0002_0000;
+
+    let c_path = match CString::new(path.as_os_str().as_bytes()) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+
+    unsafe {
+        let fd = libc::open(c_path.as_ptr(), libc::O_RDONLY);
+        if fd < 0 {
+            return;
+        }
+
+        let mut flags: libc::c_int = 0;
+        if libc::ioctl(fd, FS_IOC_GETFLAGS, &mut flags) == 0 {
+            flags |= FS_APPEND_FL;
+            let _ = libc::ioctl(fd, FS_IOC_SETFLAGS, &flags);
+        }
+
+        libc::close(fd);
+    }
+}
+
+/// No-op on non-Linux platforms.
+#[cfg(not(target_os = "linux"))]
+fn set_append_only(_path: &Path) {
+    // chattr is Linux-specific; skip silently.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_recorder_creates_valid_cast_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cast_path = dir.path().join("test.cast");
+
+        let recorder = CastRecorder::start(cast_path.clone(), 80, 24, 5)
+            .await
+            .unwrap();
+
+        recorder.record_output(b"hello world");
+        recorder.record_input(b"ls -la\n");
+        recorder.record_output(b"file1.txt\r\nfile2.txt\r\n");
+
+        let meta = recorder.finish(0).await;
+        assert!(meta.is_some());
+        let meta = meta.unwrap();
+        assert!(!meta.sha256.is_empty());
+        assert!(meta.size_bytes > 0);
+        assert!(meta.duration_secs >= 0.0);
+
+        // Read and validate the cast file.
+        let content = tokio::fs::read_to_string(&cast_path).await.unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+
+        // At least header + 3 events + exit = 5 lines.
+        assert!(lines.len() >= 5, "expected >= 5 lines, got {}", lines.len());
+
+        // Validate header.
+        let header: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(header["version"], 2);
+        assert_eq!(header["width"], 80);
+        assert_eq!(header["height"], 24);
+        assert!(header["timestamp"].is_number());
+        assert_eq!(header["env"]["TERM"], "xterm-256color");
+        assert_eq!(header["env"]["SHELL"], "/bin/bash");
+
+        // Validate event lines are valid JSON arrays.
+        for line in &lines[1..] {
+            let val: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert!(val.is_array(), "event line should be a JSON array: {}", line);
+            let arr = val.as_array().unwrap();
+            assert!(arr[0].is_number(), "first element should be timestamp");
+            assert!(arr[1].is_string(), "second element should be event type");
+        }
+
+        // Last line should be exit event.
+        let last: serde_json::Value = serde_json::from_str(lines[lines.len() - 1]).unwrap();
+        let last_arr = last.as_array().unwrap();
+        assert_eq!(last_arr[1], "exit");
+        assert_eq!(last_arr[2], 0);
+    }
+
+    #[tokio::test]
+    async fn test_finalize_cast_writes_meta() {
+        let dir = tempfile::tempdir().unwrap();
+        let cast_path = dir.path().join("session.cast");
+
+        // Create a dummy cast file.
+        tokio::fs::write(&cast_path, b"dummy cast content\n")
+            .await
+            .unwrap();
+
+        let meta = CastMeta {
+            sha256: "abcdef1234567890".to_string(),
+            size_bytes: 1024,
+            duration_secs: 42.5,
+        };
+
+        finalize_cast(&cast_path, &meta).await.unwrap();
+
+        // Verify .meta sidecar exists and has correct content.
+        let meta_path = cast_path.with_extension("cast.meta");
+        assert!(meta_path.exists(), ".meta file should exist");
+
+        let meta_content = tokio::fs::read_to_string(&meta_path).await.unwrap();
+        let meta_json: serde_json::Value = serde_json::from_str(&meta_content).unwrap();
+
+        assert_eq!(meta_json["sha256"], "abcdef1234567890");
+        assert_eq!(meta_json["synced"], false);
+        assert_eq!(meta_json["duration_secs"], 42.5);
+        assert_eq!(meta_json["size_bytes"], 1024);
+        assert!(meta_json["closed_at"].is_string());
+
+        // Verify closed_at is valid RFC3339.
+        let closed_at = meta_json["closed_at"].as_str().unwrap();
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(closed_at).is_ok(),
+            "closed_at should be valid RFC3339: {}",
+            closed_at
+        );
+    }
+
+    #[tokio::test]
+    async fn test_recorder_nonblocking_on_full_channel() {
+        let dir = tempfile::tempdir().unwrap();
+        let cast_path = dir.path().join("flood.cast");
+
+        let recorder = CastRecorder::start(cast_path.clone(), 80, 24, 5)
+            .await
+            .unwrap();
+
+        // Flood with 10000 events — must not panic or block.
+        let payload = vec![b'x'; 256];
+        for i in 0..10_000 {
+            if i % 2 == 0 {
+                recorder.record_output(&payload);
+            } else {
+                recorder.record_input(&payload);
+            }
+        }
+
+        // Finish should still work even if some events were dropped.
+        let meta = recorder.finish(0).await;
+        assert!(meta.is_some());
+
+        // The file should exist and be valid (at least header + exit).
+        let content = tokio::fs::read_to_string(&cast_path).await.unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert!(lines.len() >= 2, "at least header + exit line");
+
+        // Header is valid JSON.
+        let header: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(header["version"], 2);
+    }
+}

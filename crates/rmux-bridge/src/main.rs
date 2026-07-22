@@ -1,4 +1,5 @@
 mod auth;
+mod cast_recorder;
 mod config;
 mod files;
 mod interactive;
