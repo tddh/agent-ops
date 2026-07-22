@@ -66,7 +66,7 @@ graph LR
     C <-->|Unix Socket| D[RMUX daemon<br/>rmux-based]
 ```
 
-- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 63 terminal control tools + audit CLI
+- **agent-ops-mcp** — MCP Server running alongside the AI client, providing 66 terminal control tools + audit CLI
 - **agent-ops-cli** — CLI tool for humans: PTY-passthrough to remote rmux sessions (`connect`), plus built-in AI chat panel (Ctrl+G) with SSE streaming for real-time thinking/output. Supports vim/htop/TUI
 - **rmux-bridge** — QUIC-encrypted proxy deployed on each target Linux host, translating JSON requests to RMUX daemon calls
 - **RMUX daemon** — Terminal multiplexer on each Linux host (rmux-based)
@@ -289,7 +289,7 @@ This design keeps agent-ops focused on operations while enabling teams to build 
 
 ## Tools
 
-63 MCP tools covering the full terminal lifecycle, plus `audit query/stats/cleanup` CLI subcommands for human operators:
+66 MCP tools covering the full terminal lifecycle, plus `audit query/stats/cleanup` CLI subcommands for human operators:
 
 | Category | Tools |
 |----------|-------|
@@ -306,6 +306,7 @@ This design keeps agent-ops focused on operations while enabling teams to build 
 | Batch | `batch_exec`, `batch_upload`, `batch_download` |
 | Tunnel | `tunnel_create`, `tunnel_list`, `tunnel_close` |
 | Deploy | `deploy_bridge` |
+| Audit | `query_bridge_audit`, `list_recordings`, `get_recording` |
 | System | `agent_ops_usage_rules` |
 
 > 💡 `stream_pane` is ideal for real-time output monitoring of long-running commands (blocking read, incremental return), replacing capture_pane polling.
@@ -333,7 +334,7 @@ just build       # cargo build --workspace
 
 ## Docs
 
-- [Tool Reference](docs/TOOLS.md) — 63 MCP tools with parameters and return values
+- [Tool Reference](docs/TOOLS.md) — 66 MCP tools with parameters and return values
 - [Deployment Guide](docs/DEPLOY.md) — Architecture, build, deploy, operations, security
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)

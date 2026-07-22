@@ -197,7 +197,7 @@ AI Agent 继续通过 MCP exec 操作同一个 pane %0：
 │  │ • send_keys         │    │ • agent-ops download │    │
 │  │ • file_upload       │    │ • agent-ops tunnel   │    │
 │  │ • batch_exec        │    │                      │    │
-│  │ • ...（63 个工具）   │    │                      │    │
+│  │ • ...（66 个工具）   │    │                      │    │
 │  └─────────────────────┘    └─────────────────────┘    │
 │                                                         │
 │  共享基础设施：                                           │

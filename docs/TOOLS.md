@@ -915,7 +915,7 @@ agent-ops-mcp audit cleanup [--db <path>] [--older-than <days>] [--max-size <mb>
 | `host_name` | string | 目标主机 |
 | `session_name` | string | 会话名 |
 | `pane_id` | string | 窗格 ID（非 pane 操作为空） |
-| `action` | string | 操作类型（60 种 AuditAction） |
+| `action` | string | 操作类型（66 种 AuditAction） |
 | `detail` | string | 操作参数 |
 | `output_summary` | string | Exec/CmdEscape 的输出摘要（前 500 字符） |
 | `success` | bool | 操作是否成功 |
@@ -1203,3 +1203,98 @@ tunnel_create host="tf01" local_port=8080 remote_host="api.internal" remote_port
 | `replace_failed` | 替换二进制文件失败 |
 | `reconnect_failed` | 重启后无法重连 bridge |
 | `verify_failed` | 重启后验证 service 状态失败 |
+
+---
+
+## 审计与录制
+
+### `query_bridge_audit`
+
+查询目标主机 bridge 侧的连接事件日志（认证失败、CLI 会话 attach/detach/exit、录制清理等）。
+
+**参数**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `host` | string | ✅ | 目标主机名 |
+| `event_type` | string | | 事件类型过滤：`auth_failure`, `attach`, `detach`, `exit`, `recording_cleanup` |
+| `session_name` | string | | 会话名过滤 |
+| `since` | string | | 起始时间（RFC3339） |
+| `until` | string | | 截止时间（RFC3339） |
+| `limit` | integer | | 返回条数上限，默认 50 |
+
+**返回**
+
+```json
+{
+  "events": [
+    {
+      "event_id": "019f8a6f-810c-70d3-b302-52e61503e5d2",
+      "timestamp": "2026-07-22T15:26:31+00:00",
+      "client_addr": "10.230.21.231:52743",
+      "event_type": "attach",
+      "session_name": "agent-ops",
+      "pane_id": "%0",
+      "detail": null,
+      "duration_secs": null,
+      "exit_code": null
+    }
+  ]
+}
+```
+
+---
+
+### `list_recordings`
+
+列出已同步到本地的 PTY 会话录制文件（asciinema v2 格式）。
+
+**参数**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `host` | string | | 按主机名过滤 |
+| `date` | string | | 按日期过滤（YYYY-MM-DD） |
+| `session` | string | | 按会话名前缀过滤 |
+
+**返回**
+
+```json
+{
+  "recordings": [
+    {
+      "host": "tf001",
+      "date": "2026-07-22",
+      "file": "agent-ops__0_1784733267_4899.cast",
+      "size_bytes": 199466,
+      "path": "/Users/xxx/.agent-ops/recordings/tf001/2026-07-22/agent-ops__0_1784733267_4899.cast"
+    }
+  ],
+  "count": 1
+}
+```
+
+---
+
+### `get_recording`
+
+获取指定录制文件的内容（asciinema v2 JSONL 格式）。访问本身会被审计记录。
+
+**参数**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `path` | string | ✅ | 录制文件路径（从 `list_recordings` 获取） |
+
+**返回**
+
+```json
+{
+  "path": "/Users/xxx/.agent-ops/recordings/tf001/2026-07-22/agent-ops__0_1784733267_4899.cast",
+  "content": "{\"version\":2,...}\n[0.011, \"o\", \"...\"]\n..."
+}
+```
+
+**安全限制**：路径必须在 recordings 目录内，路径穿越会被拒绝。
+
+**回放方式**：使用 CLI `agent-ops-cli replay <file.cast> [--speed 2.0] [--idle 1.0]` 或第三方工具 `asciinema play`。

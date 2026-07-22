@@ -66,7 +66,7 @@ graph LR
     C <-->|Unix Socket| D[RMUX daemon<br/>基于 rmux]
 ```
 
-- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 63 个终端控制工具 + 操作审计 CLI
+- **agent-ops-mcp** — MCP Server，运行在 AI 客户端同机，提供 66 个终端控制工具 + 操作审计 CLI
 - **agent-ops-cli** — 命令行工具，人可以直接 PTY 透传 attach 到远程 rmux 会话（`agent-ops-cli connect`），内置 AI 对话面板（Ctrl+G）支持 SSE 实时流式输出，支持 vim/htop/TUI
 - **rmux-bridge** — 部署在每台目标 Linux 主机上的 QUIC 加密代理，将 JSON 请求翻译为 RMUX daemon 调用
 - **RMUX daemon** — 每台 Linux 主机上的终端多路复用器（基于 rmux）
@@ -288,7 +288,7 @@ echo "$(cat)" >> knowledge.jsonl && git commit -am "新增排障经验条目"
 
 ## 工具列表
 
-共 63 个 MCP 工具，覆盖完整终端生命周期；另有 `audit query/stats/cleanup` CLI 子命令供人类直接查询审计日志：
+共 66 个 MCP 工具，覆盖完整终端生命周期；另有 `audit query/stats/cleanup` CLI 子命令供人类直接查询审计日志：
 
 | 类别 | 工具 |
 |------|------|
@@ -305,6 +305,7 @@ echo "$(cat)" >> knowledge.jsonl && git commit -am "新增排障经验条目"
 | 批量操作 | `batch_exec`, `batch_upload`, `batch_download` |
 | 端口转发 | `tunnel_create`, `tunnel_list`, `tunnel_close` |
 | 部署升级 | `deploy_bridge` |
+| 审计录制 | `query_bridge_audit`, `list_recordings`, `get_recording` |
 | 系统 | `agent_ops_usage_rules` |
 
 > 💡 `stream_pane` 适用于长命令实时输出监控（阻塞读，增量返回），替代 capture_pane 轮询。
@@ -332,7 +333,7 @@ just build       # cargo build --workspace
 
 ## 文档
 
-- [工具文档](docs/TOOLS.md) — 63 个 MCP 工具的完整参数与返回值
+- [工具文档](docs/TOOLS.md) — 66 个 MCP 工具的完整参数与返回值
 - [部署文档](docs/DEPLOY.md) — 架构、构建、部署、运维、安全
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)

@@ -4,6 +4,10 @@
 
 ### Added
 - **结构化错误信封**：`tools/call` 业务失败统一走 result（`ok:false` + `error` 原字符串 + 新增 `error_code`/`recovery_hint`/`retryable`）并标记 `isError: true`，替代原来分裂的 JSON-RPC `-32000` 通道——错误内容稳定进入模型上下文，Agent 可凭错误码可靠分支。错误码覆盖主机/会话/pane/窗口/隧道未找到、参数缺失、路径穿越、白名单拒绝、认证失败、bridge 不可达、连接丢失、超时等；exec 安全拒绝标记为 `REFUSED_STATE`。未知工具仍按 MCP 规范返回 `-32602`。SKILL.md 错误对照表与 initialize instructions 已同步教授新规则（按 error_code 分支、retryable:false 禁止盲目重试）
+- **操作审计追踪**：Bridge 侧 PTY 全量录制（asciinema v2）+ 连接事件 SQLite + MCP 定期拉取录制文件到本地
+- **新 MCP 工具**：`query_bridge_audit`（查询 bridge 侧事件日志）、`list_recordings`（列出已同步录制）、`get_recording`（获取录制内容）
+- **CLI replay 子命令**：`agent-ops-cli replay <file.cast> [--speed N] [--idle N]` 本地回放录制
+- **审计闭环**：审计查询/清理/配置重载操作本身也被记录（AuditAction 新增 5 个变体）
 
 ## [0.5.0] — 2026-07-20
 

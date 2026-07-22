@@ -156,6 +156,9 @@ close_pane(host="tf01", session_name="agent-ops", pane_id="%0")  # ❌ 违反规
 | 批量文件传输 | `batch_upload` / `batch_download` |
 | 部署 bridge | `deploy_bridge`（升级部署，需已运行 bridge） |
 | 查询主机能力 | `host_capabilities`（检查 rmux 特性支持） |
+| 查询 bridge 审计 | `query_bridge_audit`（查询目标主机 bridge 侧事件日志） |
+| 列出录制文件 | `list_recordings`（列出已同步到本地的 PTY 录制） |
+| 获取录制内容 | `get_recording`（获取 .cast 文件内容，访问被审计） |
 
 ## 终端状态感知（terminal_state）
 

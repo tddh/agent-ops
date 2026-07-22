@@ -12,7 +12,7 @@
 └─────────────────┘            └──────────────┘ ════════════════════════╝ └──────────────────┘                └─────────┘
 ```
 
-- **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 63 个终端控制工具 + 操作审计 CLI
+- **agent-ops-mcp**: MCP Server，运行在 AI 客户端同机，提供 66 个终端控制工具 + 操作审计 CLI
 - **agent-ops-cli**: 命令行工具，人可以直接 PTY 透传 attach 到远程 rmux 会话（`agent-ops-cli connect`）
 - **rmux-bridge**: 部署在每台目标 Linux 主机上，QUIC 加密代理 → RMUX daemon。终端操作与文件传输统一走 QUIC 协议（UDP :9778）
 - **RMUX daemon**: 每个 Linux 主机上的终端多路复用器
@@ -157,6 +157,10 @@ ssh root@<your-bridge-ip> "systemctl status rmux-bridge --no-pager"
 | `--audit-retention-days` | `90` | 审计数据保留天数 |
 | `--audit-max-size-mb` | `500` | 审计数据库大小上限 (MB) |
 | `--audit-cleanup-interval-secs` | `600` | 自动清理间隔（秒） |
+| `--audit-sync-interval-secs` | `300` | 录制文件同步拉取间隔（秒） |
+| `--recordings-dir` | `~/.agent-ops/recordings` | 本地录制存储目录 |
+| `--recordings-retention-days` | `90` | 本地录制保留天数 |
+| `--recordings-max-size-mb` | `5000` | 本地录制容量上限 (MB) |
 
 ### 6. 认证模式
 
