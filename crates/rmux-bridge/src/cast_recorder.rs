@@ -295,8 +295,8 @@ fn set_append_only(path: &Path) {
     use std::os::unix::ffi::OsStrExt;
 
     // FS_IOC_GETFLAGS / FS_IOC_SETFLAGS ioctl numbers and FS_APPEND_FL flag.
-    const FS_IOC_GETFLAGS: libc::c_ulong = 0x8008_6601;
-    const FS_IOC_SETFLAGS: libc::c_ulong = 0x4008_6602;
+    const FS_IOC_GETFLAGS: libc::c_int = 0x8008_6601_u64 as libc::c_int;
+    const FS_IOC_SETFLAGS: libc::c_int = 0x4008_6602_u64 as libc::c_int;
     const FS_APPEND_FL: libc::c_int = 0x0000_0020;
 
     let c_path = match CString::new(path.as_os_str().as_bytes()) {
@@ -332,8 +332,8 @@ fn clear_append_only(path: &Path) {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
 
-    const FS_IOC_GETFLAGS: libc::c_ulong = 0x8008_6601;
-    const FS_IOC_SETFLAGS: libc::c_ulong = 0x4008_6602;
+    const FS_IOC_GETFLAGS: libc::c_int = 0x8008_6601_u64 as libc::c_int;
+    const FS_IOC_SETFLAGS: libc::c_int = 0x4008_6602_u64 as libc::c_int;
     const FS_APPEND_FL: libc::c_int = 0x0000_0020;
 
     let c_path = match CString::new(path.as_os_str().as_bytes()) {
@@ -545,6 +545,7 @@ pub async fn list_unsynced(recording_dir: &Path) -> anyhow::Result<Vec<serde_jso
                 results.push(serde_json::json!({
                     "file": cast_name,
                     "date": date_name,
+                    "path": cast_path.to_string_lossy(),
                     "size_bytes": size_bytes,
                     "sha256": meta["sha256"].as_str().unwrap_or(""),
                 }));
