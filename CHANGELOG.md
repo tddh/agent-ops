@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.0] — 2026-07-22
 
 ### Added
 - **结构化错误信封**：`tools/call` 业务失败统一走 result（`ok:false` + `error` 原字符串 + 新增 `error_code`/`recovery_hint`/`retryable`）并标记 `isError: true`，替代原来分裂的 JSON-RPC `-32000` 通道——错误内容稳定进入模型上下文，Agent 可凭错误码可靠分支。错误码覆盖主机/会话/pane/窗口/隧道未找到、参数缺失、路径穿越、白名单拒绝、认证失败、bridge 不可达、连接丢失、超时等；exec 安全拒绝标记为 `REFUSED_STATE`。未知工具仍按 MCP 规范返回 `-32602`。SKILL.md 错误对照表与 initialize instructions 已同步教授新规则（按 error_code 分支、retryable:false 禁止盲目重试）
