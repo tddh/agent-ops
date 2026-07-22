@@ -356,7 +356,9 @@ pub async fn handle_interactive_data(
             std::time::SystemTime::now().hash(&mut hasher);
             let client_id = format!("{:04x}", hasher.finish() & 0xFFFF);
 
-            let filename = format!("{}_{}_{}_{client_id}.cast", session_name, pane_id, epoch);
+            let safe_session = session_name.replace(['/', '\\', '\0'], "_").replace("..", "_");
+            let safe_pane = pane_id.replace(['/', '\\', '\0', '%'], "_");
+            let filename = format!("{safe_session}_{safe_pane}_{epoch}_{client_id}.cast");
             let cast_path = date_dir.join(&filename);
 
             match CastRecorder::start(cast_path.clone(), cols, rows, fsync_interval_secs).await {

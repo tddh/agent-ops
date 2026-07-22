@@ -297,7 +297,7 @@ fn set_append_only(path: &Path) {
     // FS_IOC_GETFLAGS / FS_IOC_SETFLAGS ioctl numbers and FS_APPEND_FL flag.
     const FS_IOC_GETFLAGS: libc::c_ulong = 0x8008_6601;
     const FS_IOC_SETFLAGS: libc::c_ulong = 0x4008_6602;
-    const FS_APPEND_FL: libc::c_int = 0x0002_0000;
+    const FS_APPEND_FL: libc::c_int = 0x0000_0020;
 
     let c_path = match CString::new(path.as_os_str().as_bytes()) {
         Ok(p) => p,
@@ -334,7 +334,7 @@ fn clear_append_only(path: &Path) {
 
     const FS_IOC_GETFLAGS: libc::c_ulong = 0x8008_6601;
     const FS_IOC_SETFLAGS: libc::c_ulong = 0x4008_6602;
-    const FS_APPEND_FL: libc::c_int = 0x0002_0000;
+    const FS_APPEND_FL: libc::c_int = 0x0000_0020;
 
     let c_path = match CString::new(path.as_os_str().as_bytes()) {
         Ok(p) => p,
@@ -560,6 +560,12 @@ pub async fn list_unsynced(recording_dir: &Path) -> anyhow::Result<Vec<serde_jso
 /// Finds `{recording_dir}/{date}/{file_name}`, derives the `.meta` path,
 /// reads it, sets `"synced": true`, and writes it back.
 pub async fn mark_synced(recording_dir: &Path, file_name: &str, date: &str) -> anyhow::Result<()> {
+    if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
+        anyhow::bail!("unsafe file_name in mark_synced: '{file_name}'");
+    }
+    if date.contains('/') || date.contains('\\') || date.contains("..") {
+        anyhow::bail!("unsafe date in mark_synced: '{date}'");
+    }
     let meta_path = recording_dir
         .join(date)
         .join(file_name)
