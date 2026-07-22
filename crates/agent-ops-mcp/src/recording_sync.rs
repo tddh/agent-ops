@@ -81,8 +81,12 @@ async fn sync_all_hosts(
         }
     }
 
-    cleanup_local_recordings(&config.recordings_dir, config.retention_days, config.max_size_mb)
-        .await?;
+    cleanup_local_recordings(
+        &config.recordings_dir,
+        config.retention_days,
+        config.max_size_mb,
+    )
+    .await?;
 
     Ok(())
 }
@@ -128,7 +132,11 @@ async fn sync_host(
         // Reject anything that is not a plain YYYY-MM-DD date or a bare file
         // name before we build any paths from it.
         if !is_date_dir(date) || file_name.contains('/') || file_name.contains("..") {
-            tracing::warn!(file = file_name, date = date, "skipping unsafe recording entry");
+            tracing::warn!(
+                file = file_name,
+                date = date,
+                "skipping unsafe recording entry"
+            );
             continue;
         }
 
@@ -307,10 +315,7 @@ async fn cleanup_local_recordings(
             }
             let size = dir_size(path).await;
             if let Err(e) = tokio::fs::remove_dir_all(path).await {
-                tracing::warn!(
-                    "failed to remove recording dir {}: {e}",
-                    path.display()
-                );
+                tracing::warn!("failed to remove recording dir {}: {e}", path.display());
             } else {
                 total = total.saturating_sub(size);
             }

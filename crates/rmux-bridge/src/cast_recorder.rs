@@ -746,7 +746,9 @@ mod tests {
         let date_dir = rec_dir.join("2026-07-22");
         tokio::fs::create_dir_all(&date_dir).await.unwrap();
 
-        tokio::fs::write(date_dir.join("test.cast"), "data").await.unwrap();
+        tokio::fs::write(date_dir.join("test.cast"), "data")
+            .await
+            .unwrap();
         tokio::fs::write(
             date_dir.join("test.meta"),
             r#"{"sha256": "abc", "synced": false, "size_bytes": 4}"#,
@@ -759,7 +761,9 @@ mod tests {
         assert_eq!(unsynced[0]["file"], "test.cast");
         assert_eq!(unsynced[0]["date"], "2026-07-22");
 
-        mark_synced(&rec_dir, "test.cast", "2026-07-22").await.unwrap();
+        mark_synced(&rec_dir, "test.cast", "2026-07-22")
+            .await
+            .unwrap();
 
         let unsynced_after = list_unsynced(&rec_dir).await.unwrap();
         assert_eq!(unsynced_after.len(), 0);
