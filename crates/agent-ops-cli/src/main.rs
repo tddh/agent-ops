@@ -1,6 +1,7 @@
 mod ai;
 mod connect;
 mod protocol;
+mod replay;
 mod terminal;
 mod tui;
 
@@ -39,6 +40,20 @@ enum Commands {
 
     List {
         host: String,
+    },
+
+    /// Replay a recorded terminal session (.cast file)
+    Replay {
+        /// Path to the .cast recording file
+        file: String,
+
+        /// Playback speed multiplier (e.g. 2.0 = 2x faster)
+        #[arg(long, default_value = "1.0")]
+        speed: f64,
+
+        /// Cap idle time between events (seconds)
+        #[arg(long)]
+        idle: Option<f64>,
     },
 }
 
@@ -101,6 +116,17 @@ async fn main() -> anyhow::Result<()> {
         Commands::List { host } => {
             let config = load_host_config(&cli.hosts_file, &host)?;
             connect::list_sessions(&config, &cli.ca_cert).await
+        }
+        Commands::Replay { file, speed, idle } => {
+            let expanded = expand_tilde(&file);
+            let path = std::path::Path::new(&expanded);
+            replay::replay(
+                path,
+                &replay::ReplayOptions {
+                    speed,
+                    idle_limit: idle,
+                },
+            )
         }
     };
     crate::ai::kill_serve().await;
