@@ -60,7 +60,7 @@ AI (via MCP)
 ```mermaid
 graph LR
     A[AI Client] <-->|MCP stdio| B[agent-ops-mcp<br/>macOS/Linux/Windows]
-    H[Human] <-->|PTY passthrough| E[agent-ops-cli<br/>macOS/Linux]
+    H[Human] <-->|PTY passthrough| E[agent-ops-cli<br/>macOS/Linux/Windows]
     B <-->|QUIC :9778<br/>terminal ops + file transfer| C[rmux-bridge<br/>Linux host]
     E <-->|QUIC :9778<br/>terminal attach| C
     C <-->|Unix Socket| D[RMUX daemon<br/>rmux-based]
@@ -76,7 +76,7 @@ graph LR
 | Component | Runs on | Depends on |
 |-----------|---------|------------|
 | `agent-ops-mcp` | AI client machine (macOS/Linux/Windows) | Compiled binary (needs `hosts.yaml` + CA cert at runtime) |
-| `agent-ops-cli` | Human operator machine (macOS/Linux) | Compiled binary (needs `hosts.yaml` + CA cert at runtime) |
+| `agent-ops-cli` | Human operator machine (macOS/Linux/Windows) | Compiled binary (needs `hosts.yaml` + CA cert at runtime) |
 | `rmux-bridge` | Each target Linux host | **RMUX daemon** (`curl -fsSL https://rmux.io/install.sh \| sh`) |
 | RMUX daemon | Each target Linux host | rmux (needs installation) |
 
@@ -119,7 +119,7 @@ The message view auto-scrolls to the latest output (follow mode) while the AI st
 
 The AI panel starts an `opencode serve` process on first use (port 14096). It persists across panel open/close cycles and is cleaned up when the CLI exits. Use `--opencode-dir <path>` to control the working directory (default: current directory).
 
-PTY passthrough mode supports mouse scroll and trackpad gestures via SGR mouse protocol.
+PTY passthrough mode forwards raw terminal bytes — mouse events work when the remote application enables mouse mode (e.g., vim, htop).
 
 ## Quick Start
 

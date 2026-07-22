@@ -41,7 +41,7 @@
 ### Changed
 - **代码组织重构**：大文件拆分，提升可维护性
   - `tools.rs` (3661行) → `tools/` 目录 12 个子模块
-  - `protocol.rs` (1965行) → `protocol/` 目录 7 个子模块
+  - `protocol.rs` (1965行) → `protocol/` 目录 6 个子模块
   - `main.rs` (1163行) → `handler.rs` + `audit_cli.rs` + `schema.rs`
   - `router.rs` `RwLock::unwrap()` 改为 `expect()`，防止 poisoned lock panic
 - **Exec 输出不再过滤 prompt 行**：`exec` 返回的 `output` 现在包含 start_marker → sentinel 区间的完整终端上下文（含 shell 提示符、命令回显），不做行级过滤——所见即所得。旧版本会过滤掉提示符和命令回显行
@@ -75,7 +75,7 @@
   - 完整审计日志记录
 - **终端状态感知**：新增 `terminal_state.rs` 模块，`TerminalState` 枚举覆盖 8 种终端状态（ready/running/password/confirm/repl/editor/pager/unknown）
   - 5 个工具（`capture_pane`、`exec`、`wait_for_text`、`wait_stable`、`pane_info`）新增 `terminal_state` 和 `cursor` 返回字段
-  - 24 个单元测试覆盖启发式检测逻辑
+  - 22 个单元测试覆盖启发式检测逻辑
 - **Exec 执行前安全检查**：`exec` 执行命令前检测终端状态，非 `ready` 状态自动拒绝执行
   - 新增响应字段：`pre_terminal_state`（执行前状态）和 `refused`（是否被拒绝）
   - 防止命令注入到 vim/less/密码提示/REPL 等非 shell 上下文
@@ -91,7 +91,7 @@
 - 工作空间依赖统一到根 Cargo.toml，13 个共享依赖版本集中管理
 - `rmux-bridge.service` 添加 `After=rmux-daemon.service` 和 `Requires=rmux-daemon.service`
 - 部署脚本 socket 检测路径增加 `$HOME/.rmux`（与 daemon service 的 `RMUX_TMPDIR` 保持一致）
-- Bridge CLI `--rmux-socket` 默认值从 `/tmp/rmux-1000/default` 改为动态检测
+- Bridge CLI `--rmux-socket` 默认值保持 `/tmp/rmux-1000/default`，部署脚本自动检测实际路径（含 `$HOME/.rmux`）并通过参数传入
 
 ### Security
 - host_filter 通配符过滤从手写正则改为 `glob::Pattern`，消除 ReDoS 风险
