@@ -51,20 +51,6 @@ pub async fn authenticate_quic(
         anyhow::bail!("authentication failed");
     }
 
-    audit_db
-        .log(bridge_audit::BridgeEvent {
-            event_type: "auth_success".to_string(),
-            client_addr,
-            client_id: None,
-            session_name: None,
-            pane_id: None,
-            cols: None,
-            rows: None,
-            detail: None,
-            duration_secs: None,
-            exit_code: None,
-        })
-        .await;
     send.write_all(b"OK\n").await?;
     tracing::info!("QUIC client authenticated successfully");
     Ok(())
