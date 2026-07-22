@@ -37,6 +37,7 @@ pub fn replay(path: &Path, opts: &ReplayOptions) -> anyhow::Result<()> {
     let mut out = stdout.lock();
     let start = Instant::now();
     let mut last_time: f64 = 0.0;
+    let mut virtual_elapsed: f64 = 0.0;
 
     for line in lines {
         let line = line?;
@@ -62,15 +63,16 @@ pub fn replay(path: &Path, opts: &ReplayOptions) -> anyhow::Result<()> {
             continue;
         }
 
-        // Calculate delay
+        // Calculate delay with speed and idle cap
         let mut delay = (time - last_time) / opts.speed;
         if let Some(limit) = opts.idle_limit {
             delay = delay.min(limit);
         }
         last_time = time;
+        virtual_elapsed += delay;
 
         if delay > 0.001 {
-            let target = start + Duration::from_secs_f64(time / opts.speed);
+            let target = start + Duration::from_secs_f64(virtual_elapsed);
             let now = Instant::now();
             if target > now {
                 std::thread::sleep(target - now);

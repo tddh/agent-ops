@@ -98,7 +98,7 @@ where
             let session_name = params["session_name"].as_str();
             let since = params["since"].as_str();
             let until = params["until"].as_str();
-            let limit = params["limit"].as_u64().unwrap_or(50) as usize;
+            let limit = (params["limit"].as_u64().unwrap_or(50) as usize).min(10_000);
 
             let response = match audit_db
                 .query(event_type, session_name, since, until, limit)

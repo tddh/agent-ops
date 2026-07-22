@@ -197,6 +197,23 @@ async fn main() -> anyhow::Result<()> {
                             bytes_freed = freed,
                             "recording cleanup completed"
                         );
+                        cleanup_audit_db
+                            .log(bridge_audit::BridgeEvent {
+                                event_type: "recording_cleanup".to_string(),
+                                client_addr: String::new(),
+                                client_id: None,
+                                session_name: None,
+                                pane_id: None,
+                                cols: None,
+                                rows: None,
+                                detail: Some(serde_json::json!({
+                                    "files_deleted": deleted,
+                                    "bytes_freed": freed
+                                })),
+                                duration_secs: None,
+                                exit_code: None,
+                            })
+                            .await;
                     }
                     Err(e) => {
                         tracing::error!("recording cleanup failed: {e}");

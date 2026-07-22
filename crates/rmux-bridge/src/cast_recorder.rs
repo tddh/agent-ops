@@ -41,6 +41,7 @@ pub struct CastRecorder {
     tx: mpsc::Sender<CastEvent>,
     path: PathBuf,
     done_rx: Option<oneshot::Receiver<Option<CastMeta>>>,
+    gap_pending: std::sync::atomic::AtomicBool,
 }
 
 impl CastRecorder {
@@ -54,6 +55,12 @@ impl CastRecorder {
         fsync_interval_secs: u64,
     ) -> anyhow::Result<Self> {
         let file = File::create(&path).await?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            tokio::fs::set_permissions(&path, perms).await?;
+        }
         let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
         let (done_tx, done_rx) = oneshot::channel();
 
@@ -70,17 +77,26 @@ impl CastRecorder {
             tx,
             path,
             done_rx: Some(done_rx),
+            gap_pending: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
     /// Record PTY output data. Non-blocking; drops event if channel is full.
     pub fn record_output(&self, data: &[u8]) {
-        let _ = self.tx.try_send(CastEvent::Output(data.to_vec()));
+        use std::sync::atomic::Ordering;
+        if self.tx.try_send(CastEvent::Output(data.to_vec())).is_err() {
+            self.gap_pending.store(true, Ordering::Relaxed);
+        } else if self.gap_pending.swap(false, Ordering::Relaxed) {
+            let _ = self.tx.try_send(CastEvent::Output(b"[gap]\r\n".to_vec()));
+        }
     }
 
     /// Record PTY input data. Non-blocking; drops event if channel is full.
     pub fn record_input(&self, data: &[u8]) {
-        let _ = self.tx.try_send(CastEvent::Input(data.to_vec()));
+        use std::sync::atomic::Ordering;
+        if self.tx.try_send(CastEvent::Input(data.to_vec())).is_err() {
+            self.gap_pending.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Finish recording: sends the exit event, waits for the writer task to

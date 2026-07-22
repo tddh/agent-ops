@@ -173,6 +173,10 @@ pub async fn handle_interactive_control(
 
         match msg_type {
             0x02 => {
+                if payload.len() < 4 {
+                    tracing::warn!("resize payload too short: {} bytes", payload.len());
+                    continue;
+                }
                 let new_cols = u16::from_le_bytes([payload[0], payload[1]]);
                 let new_rows = u16::from_le_bytes([payload[2], payload[3]]);
 
@@ -349,6 +353,15 @@ pub async fn handle_interactive_data(
             tracing::warn!("failed to create recording dir {:?}: {}", date_dir, e);
             None
         } else {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = tokio::fs::set_permissions(
+                    &date_dir,
+                    std::fs::Permissions::from_mode(0o700),
+                )
+                .await;
+            }
             let epoch = now.timestamp();
             // Generate a 4-hex client id from SystemTime hash (no rand crate).
             use std::hash::{Hash, Hasher};
@@ -527,23 +540,44 @@ pub async fn handle_interactive_data(
 fn parse_attach_payload(data: &[u8]) -> Result<(String, String, u16, u16, String)> {
     let mut offset = 0;
 
+    if data.len() < 2 {
+        anyhow::bail!("attach payload too short for session_name_len");
+    }
     let session_name_len = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
     offset += 2;
+    if data.len() < offset + session_name_len {
+        anyhow::bail!("attach payload truncated in session_name");
+    }
     let session_name = String::from_utf8(data[offset..offset + session_name_len].to_vec())?;
     offset += session_name_len;
 
+    if data.len() < offset + 1 {
+        anyhow::bail!("attach payload too short for pane_id_len");
+    }
     let pane_id_len = data[offset] as usize;
     offset += 1;
+    if data.len() < offset + pane_id_len {
+        anyhow::bail!("attach payload truncated in pane_id");
+    }
     let pane_id = String::from_utf8(data[offset..offset + pane_id_len].to_vec())?;
     offset += pane_id_len;
 
+    if data.len() < offset + 4 {
+        anyhow::bail!("attach payload too short for cols/rows");
+    }
     let cols = u16::from_le_bytes([data[offset], data[offset + 1]]);
     offset += 2;
     let rows = u16::from_le_bytes([data[offset], data[offset + 1]]);
     offset += 2;
 
+    if data.len() < offset + 1 {
+        anyhow::bail!("attach payload too short for term_len");
+    }
     let term_len = data[offset] as usize;
     offset += 1;
+    if data.len() < offset + term_len {
+        anyhow::bail!("attach payload truncated in term");
+    }
     let term = String::from_utf8(data[offset..offset + term_len].to_vec())?;
 
     Ok((session_name, pane_id, cols, rows, term))
