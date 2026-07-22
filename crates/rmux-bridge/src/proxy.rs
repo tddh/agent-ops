@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
+use crate::bridge_audit::BridgeAuditDb;
 use crate::protocol::ProtocolProxy;
 use agent_ops_core::MAX_FRAME_SIZE;
 
@@ -23,7 +24,11 @@ const MAX_CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4 MB
 /// Main event loop: reads length-prefixed JSON frames from `tls_stream`,
 /// dispatches each request to `protocol_proxy`, and writes back the response.
 /// Special handling for file upload/download streaming frames.
-pub async fn proxy_protocol_aware<S>(tls_stream: S, protocol_proxy: &ProtocolProxy) -> Result<()>
+pub async fn proxy_protocol_aware<S>(
+    tls_stream: S,
+    protocol_proxy: &ProtocolProxy,
+    audit_db: Arc<BridgeAuditDb>,
+) -> Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -84,6 +89,43 @@ where
         );
 
         let start = std::time::Instant::now();
+
+        // audit_query: handle locally via BridgeAuditDb (not forwarded to rmux)
+        if request["command"].as_str() == Some("audit_query") {
+            let params = &request["params"];
+            let event_type = params["event_type"].as_str();
+            let session_name = params["session_name"].as_str();
+            let since = params["since"].as_str();
+            let until = params["until"].as_str();
+            let limit = params["limit"].as_u64().unwrap_or(50) as usize;
+
+            let response = match audit_db
+                .query(event_type, session_name, since, until, limit)
+                .await
+            {
+                Ok(events) => json!({"events": events}),
+                Err(e) => json!({"error": format!("audit query failed: {}", e)}),
+            };
+            send_response(&writer, &response).await?;
+            handled = true;
+            continue;
+        }
+
+        // audit_stats: handle locally via BridgeAuditDb (not forwarded to rmux)
+        if request["command"].as_str() == Some("audit_stats") {
+            let params = &request["params"];
+            let since = params["since"].as_str();
+
+            let response = match audit_db.stats(since).await {
+                Ok((total, events_by_type)) => {
+                    json!({"total": total, "events_by_type": events_by_type})
+                }
+                Err(e) => json!({"error": format!("audit stats failed: {}", e)}),
+            };
+            send_response(&writer, &response).await?;
+            handled = true;
+            continue;
+        }
 
         // file_upload: DEPRECATED — use QUIC file transfer instead
         if req_type == "file_upload" {

@@ -106,7 +106,6 @@ impl BridgeAuditDb {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn query(
         &self,
         event_type: Option<&str>,
@@ -184,6 +183,60 @@ impl BridgeAuditDb {
         })
         .await
         .context("query task panicked")?
+    }
+
+    pub async fn stats(
+        &self,
+        since: Option<&str>,
+    ) -> anyhow::Result<(u64, serde_json::Map<String, serde_json::Value>)> {
+        let since = since.map(|s| s.to_string());
+        let conn = self.conn.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.blocking_lock();
+
+            let (total, by_type) = if let Some(ref s) = since {
+                let total: u64 = conn.query_row(
+                    "SELECT COUNT(*) FROM connect_events WHERE timestamp >= ?1",
+                    rusqlite::params![s],
+                    |row| row.get(0),
+                )?;
+                let mut stmt = conn.prepare(
+                    "SELECT event_type, COUNT(*) FROM connect_events WHERE timestamp >= ?1 GROUP BY event_type",
+                )?;
+                let rows = stmt.query_map(rusqlite::params![s], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+                })?;
+                let mut map = serde_json::Map::new();
+                for row in rows {
+                    let (et, count) = row?;
+                    map.insert(et, serde_json::Value::from(count));
+                }
+                (total, map)
+            } else {
+                let total: u64 = conn.query_row(
+                    "SELECT COUNT(*) FROM connect_events",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let mut stmt = conn.prepare(
+                    "SELECT event_type, COUNT(*) FROM connect_events GROUP BY event_type",
+                )?;
+                let rows = stmt.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+                })?;
+                let mut map = serde_json::Map::new();
+                for row in rows {
+                    let (et, count) = row?;
+                    map.insert(et, serde_json::Value::from(count));
+                }
+                (total, map)
+            };
+
+            Ok((total, by_type))
+        })
+        .await
+        .context("stats task panicked")?
     }
 
     pub async fn cleanup(&self, retention_days: u32, _max_size_mb: u64) -> anyhow::Result<usize> {
