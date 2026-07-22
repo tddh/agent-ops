@@ -1,4 +1,5 @@
 mod auth;
+mod bridge_audit;
 mod cast_recorder;
 mod config;
 mod files;
