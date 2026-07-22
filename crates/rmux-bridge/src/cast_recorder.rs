@@ -326,6 +326,172 @@ fn set_append_only(_path: &Path) {
     // chattr is Linux-specific; skip silently.
 }
 
+/// Clear the append-only flag (`FS_APPEND_FL`) on a file. Linux only, best-effort.
+#[cfg(target_os = "linux")]
+fn clear_append_only(path: &Path) {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    const FS_IOC_GETFLAGS: libc::c_ulong = 0x8008_6601;
+    const FS_IOC_SETFLAGS: libc::c_ulong = 0x4008_6602;
+    const FS_APPEND_FL: libc::c_int = 0x0002_0000;
+
+    let c_path = match CString::new(path.as_os_str().as_bytes()) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+
+    unsafe {
+        let fd = libc::open(c_path.as_ptr(), libc::O_RDONLY);
+        if fd < 0 {
+            return;
+        }
+
+        let mut flags: libc::c_int = 0;
+        if libc::ioctl(fd, FS_IOC_GETFLAGS, &mut flags) == 0 {
+            flags &= !FS_APPEND_FL;
+            let _ = libc::ioctl(fd, FS_IOC_SETFLAGS, &flags);
+        }
+
+        libc::close(fd);
+    }
+}
+
+/// No-op on non-Linux platforms.
+#[cfg(not(target_os = "linux"))]
+fn clear_append_only(_path: &Path) {
+    // chattr is Linux-specific; skip silently.
+}
+
+/// Sum file sizes in a directory (non-recursive).
+async fn dir_size(path: &Path) -> u64 {
+    let mut total: u64 = 0;
+    let mut entries = match tokio::fs::read_dir(path).await {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        if let Ok(meta) = entry.metadata().await {
+            if meta.is_file() {
+                total += meta.len();
+            }
+        }
+    }
+    total
+}
+
+/// Sum all date directory sizes under the recording directory.
+async fn total_recording_size(recording_dir: &Path) -> u64 {
+    let mut total: u64 = 0;
+    let mut entries = match tokio::fs::read_dir(recording_dir).await {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        if let Ok(meta) = entry.metadata().await {
+            if meta.is_dir() {
+                total += dir_size(&entry.path()).await;
+            }
+        }
+    }
+    total
+}
+
+/// Remove `chattr +a` from .cast files in a directory, then remove the directory tree.
+async fn remove_dir_all_with_chattr(path: &Path) -> std::io::Result<()> {
+    let mut entries = tokio::fs::read_dir(path).await?;
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let entry_path = entry.path();
+        if entry_path.extension().is_some_and(|ext| ext == "cast") {
+            clear_append_only(&entry_path);
+        }
+    }
+    tokio::fs::remove_dir_all(path).await
+}
+
+/// Clean up old recording directories.
+///
+/// Phase 1: Delete date directories (format YYYY-MM-DD) older than `retention_days`.
+/// Phase 2: If total size still exceeds `max_size_mb`, delete oldest date directories
+/// until under the limit.
+///
+/// Returns `(files_deleted, bytes_freed)`.
+pub async fn cleanup_recordings(
+    recording_dir: &Path,
+    retention_days: u32,
+    max_size_mb: u64,
+) -> anyhow::Result<(usize, u64)> {
+    let mut files_deleted: usize = 0;
+    let mut bytes_freed: u64 = 0;
+
+    // Compute cutoff date string (YYYY-MM-DD).
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(i64::from(retention_days));
+    let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
+
+    // Collect date directories sorted by name (lexicographic = chronological).
+    let mut date_dirs: Vec<(String, PathBuf)> = Vec::new();
+    let mut entries = tokio::fs::read_dir(recording_dir).await?;
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Validate YYYY-MM-DD format (10 chars, dashes at positions 4 and 7).
+        if name.len() == 10
+            && name.as_bytes()[4] == b'-'
+            && name.as_bytes()[7] == b'-'
+            && entry.file_type().await.is_ok_and(|ft| ft.is_dir())
+        {
+            date_dirs.push((name, entry.path()));
+        }
+    }
+    date_dirs.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Phase 1: Delete directories older than retention cutoff.
+    let mut remaining: Vec<(String, PathBuf)> = Vec::new();
+    for (name, path) in &date_dirs {
+        if name.as_str() < cutoff_str.as_str() {
+            let size = dir_size(path).await;
+            if let Err(e) = remove_dir_all_with_chattr(path).await {
+                tracing::warn!("failed to remove old recording dir {}: {}", path.display(), e);
+                remaining.push((name.clone(), path.clone()));
+            } else {
+                files_deleted += 1;
+                bytes_freed += size;
+                tracing::debug!(dir = %name, bytes = size, "removed expired recording dir");
+            }
+        } else {
+            remaining.push((name.clone(), path.clone()));
+        }
+    }
+
+    // Phase 2: If total size exceeds max, delete oldest remaining directories.
+    let max_bytes = max_size_mb * 1024 * 1024;
+    let mut current_size = total_recording_size(recording_dir).await;
+
+    for (name, path) in &remaining {
+        if current_size <= max_bytes {
+            break;
+        }
+        let size = dir_size(path).await;
+        if let Err(e) = remove_dir_all_with_chattr(path).await {
+            tracing::warn!("failed to remove recording dir {}: {}", path.display(), e);
+        } else {
+            files_deleted += 1;
+            bytes_freed += size;
+            current_size = current_size.saturating_sub(size);
+            tracing::debug!(dir = %name, bytes = size, "removed recording dir for size limit");
+        }
+    }
+
+    if files_deleted > 0 {
+        tracing::info!(
+            files_deleted,
+            bytes_freed,
+            "recording cleanup completed"
+        );
+    }
+
+    Ok((files_deleted, bytes_freed))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,5 +619,42 @@ mod tests {
         // Header is valid JSON.
         let header: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
         assert_eq!(header["version"], 2);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_removes_old_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let recordings = dir.path().join("recordings");
+        tokio::fs::create_dir_all(&recordings).await.unwrap();
+
+        // Create an old date dir (2020-01-01) and a recent date dir (2026-07-22).
+        let old_dir = recordings.join("2020-01-01");
+        let new_dir = recordings.join("2026-07-22");
+        tokio::fs::create_dir_all(&old_dir).await.unwrap();
+        tokio::fs::create_dir_all(&new_dir).await.unwrap();
+
+        // Put dummy .cast files in each.
+        tokio::fs::write(old_dir.join("session1.cast"), b"old cast data\n")
+            .await
+            .unwrap();
+        tokio::fs::write(old_dir.join("session1.meta"), b"{}\n")
+            .await
+            .unwrap();
+        tokio::fs::write(new_dir.join("session2.cast"), b"new cast data\n")
+            .await
+            .unwrap();
+        tokio::fs::write(new_dir.join("session2.meta"), b"{}\n")
+            .await
+            .unwrap();
+
+        // Run cleanup with retention_days=90 — old dir should be deleted.
+        let (deleted, freed) = cleanup_recordings(&recordings, 90, 1024)
+            .await
+            .unwrap();
+
+        assert_eq!(deleted, 1, "should delete exactly 1 directory");
+        assert!(freed > 0, "should report bytes freed");
+        assert!(!old_dir.exists(), "old dir should be removed");
+        assert!(new_dir.exists(), "new dir should remain");
     }
 }

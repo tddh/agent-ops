@@ -160,6 +160,35 @@ async fn main() -> anyhow::Result<()> {
     });
     // ─── end QUIC listener ───
 
+    // ─── Periodic recording cleanup ───
+    if config.recording_enabled {
+        let cleanup_dir = config.resolve_recording_dir();
+        let retention_days = config.recording_retention_days;
+        let max_size_mb = config.recording_max_size_mb;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+            loop {
+                interval.tick().await;
+                match cast_recorder::cleanup_recordings(&cleanup_dir, retention_days, max_size_mb)
+                    .await
+                {
+                    Ok((deleted, freed)) if deleted > 0 => {
+                        tracing::info!(
+                            files_deleted = deleted,
+                            bytes_freed = freed,
+                            "recording cleanup completed"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("recording cleanup failed: {e}");
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+    // ─── end recording cleanup ───
+
     // Block forever — QUIC listener runs in background task
     std::future::pending::<anyhow::Result<()>>().await
 }
