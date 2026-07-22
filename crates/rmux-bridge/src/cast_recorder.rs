@@ -272,7 +272,7 @@ fn format_event_line(elapsed: f64, kind: &str, data: &[u8]) -> String {
 /// Write a `.meta` sidecar JSON file next to the cast file and (on Linux)
 /// set the append-only attribute via `chattr +a`.
 pub async fn finalize_cast(cast_path: &Path, meta: &CastMeta) -> anyhow::Result<()> {
-    let meta_path = cast_path.with_extension("cast.meta");
+    let meta_path = cast_path.with_extension("meta");
 
     let closed_at = chrono::Utc::now().to_rfc3339();
     let meta_json = serde_json::json!({
@@ -286,8 +286,8 @@ pub async fn finalize_cast(cast_path: &Path, meta: &CastMeta) -> anyhow::Result<
     let content = serde_json::to_string_pretty(&meta_json)?;
     tokio::fs::write(&meta_path, content.as_bytes()).await?;
 
-    // Best-effort: set append-only attribute on Linux.
-    set_append_only(&meta_path);
+    // Best-effort: set append-only attribute on the cast file (Linux).
+    set_append_only(cast_path);
 
     Ok(())
 }
@@ -405,7 +405,7 @@ mod tests {
         finalize_cast(&cast_path, &meta).await.unwrap();
 
         // Verify .meta sidecar exists and has correct content.
-        let meta_path = cast_path.with_extension("cast.meta");
+        let meta_path = cast_path.with_extension("meta");
         assert!(meta_path.exists(), ".meta file should exist");
 
         let meta_content = tokio::fs::read_to_string(&meta_path).await.unwrap();
