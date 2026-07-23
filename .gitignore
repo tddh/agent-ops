@@ -48,7 +48,8 @@ docs/competitive-analysis.md
 *.bak
 .qoder/*
 .qoder
-docs/superpowers/plans/
+docs/superpowers/plans/*
+docs/superpowers/specs/*
 
 deploy/libexec/
 deploy/rmux
@@ -57,3 +58,4 @@ deploy/rmux-daemon
 # 发布打包产物
 dist/
 release-pkg/
+docs/superpowers/
