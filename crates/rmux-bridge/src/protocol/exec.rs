@@ -229,11 +229,4 @@ impl ProtocolProxy {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn handle_file_download_open(
-        remote_path: &str,
-    ) -> std::result::Result<std::fs::File, serde_json::Value> {
-        std::fs::File::open(remote_path)
-            .map_err(|e| json!({"ok": false, "error": format!("failed to open file: {}", e)}))
-    }
 }

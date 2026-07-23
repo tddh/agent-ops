@@ -2,7 +2,6 @@ mod ai;
 mod connect;
 mod protocol;
 mod replay;
-mod terminal;
 mod tui;
 
 use clap::{Parser, Subcommand};

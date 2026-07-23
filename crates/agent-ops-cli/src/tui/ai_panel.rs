@@ -81,15 +81,6 @@ impl AiPanel {
         msgs.push(msg);
     }
 
-    #[allow(dead_code)]
-    pub async fn last_code_block(&self) -> Option<String> {
-        let msgs = self.messages.lock().await;
-        msgs.iter()
-            .rev()
-            .find(|m| matches!(m.role, Role::Assistant))
-            .and_then(|m| m.code_blocks.last().cloned())
-    }
-
     pub async fn clear(&self) {
         self.messages.lock().await.clear();
     }

@@ -185,8 +185,4 @@ impl StreamManager {
         }
     }
 
-    #[allow(dead_code)]
-    pub async fn close_all(&self) {
-        self.streams.lock().await.clear();
-    }
 }

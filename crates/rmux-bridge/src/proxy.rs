@@ -13,14 +13,6 @@ use crate::bridge_audit::BridgeAuditDb;
 use crate::protocol::ProtocolProxy;
 use agent_ops_core::MAX_FRAME_SIZE;
 
-#[allow(dead_code)]
-const FILE_UPLOAD_FRAME: u8 = 0x03;
-#[allow(dead_code)]
-const FILE_DOWNLOAD_FRAME: u8 = 0x04;
-
-#[allow(dead_code)]
-const MAX_CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4 MB
-
 /// Main event loop: reads length-prefixed JSON frames from `tls_stream`,
 /// dispatches each request to `protocol_proxy`, and writes back the response.
 /// Special handling for file upload/download streaming frames.
