@@ -2,6 +2,10 @@
 
 ## [0.6.0] — 2026-07-22
 
+### Fixed
+- **新创建 session 缺少 HOME/USER/LOGNAME 环境变量**：bridge 作为 systemd 服务运行，进程环境不包含这些变量，导致 pane 的 bash 仅将其设为 shell 变量而未 export。Go 静态编译的 kubectl 调用 `os.UserHomeDir()` 返回空，回退到相对路径 `.kube/config`，在 `~/.kube/` 目录下解析为 `.kube/.kube/config` 而失败。修复：`session.rs` 创建 session 时通过 `ProcessSpec.environment` 传递从 `getpwuid` 获取的用户环境，并用 login shell 补齐完整 PATH。
+- **deploy_bridge 耗时 47s**：`systemctl restart` 后 `exec_in_session` 在已断开的 QUIC 连接上等待 sentinel，直到 30s idle timeout 才返回。修复：restart 步骤改为 fire-and-forget `send_keys`，不等 sentinel，重启后状态由重连后的单独验证步骤确认。部署耗时从 47s 降至 4s。
+
 ### Added
 - **结构化错误信封**：`tools/call` 业务失败统一走 result（`ok:false` + `error` 原字符串 + 新增 `error_code`/`recovery_hint`/`retryable`）并标记 `isError: true`，替代原来分裂的 JSON-RPC `-32000` 通道——错误内容稳定进入模型上下文，Agent 可凭错误码可靠分支。错误码覆盖主机/会话/pane/窗口/隧道未找到、参数缺失、路径穿越、白名单拒绝、认证失败、bridge 不可达、连接丢失、超时等；exec 安全拒绝标记为 `REFUSED_STATE`。未知工具仍按 MCP 规范返回 `-32602`。SKILL.md 错误对照表与 initialize instructions 已同步教授新规则（按 error_code 分支、retryable:false 禁止盲目重试）
 - **操作审计追踪**：Bridge 侧 PTY 全量录制（asciinema v2）+ 连接事件 SQLite + MCP 定期拉取录制文件到本地
