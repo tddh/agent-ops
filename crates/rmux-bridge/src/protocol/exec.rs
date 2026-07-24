@@ -228,5 +228,4 @@ impl ProtocolProxy {
             Err(e) => json!({"ok": false, "error": e.to_string()}),
         }
     }
-
 }

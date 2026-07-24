@@ -356,11 +356,9 @@ pub async fn handle_interactive_data(
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = tokio::fs::set_permissions(
-                    &date_dir,
-                    std::fs::Permissions::from_mode(0o700),
-                )
-                .await;
+                let _ =
+                    tokio::fs::set_permissions(&date_dir, std::fs::Permissions::from_mode(0o700))
+                        .await;
             }
             let epoch = now.timestamp();
             // Generate a 4-hex client id from SystemTime hash (no rand crate).
@@ -369,7 +367,9 @@ pub async fn handle_interactive_data(
             std::time::SystemTime::now().hash(&mut hasher);
             let client_id = format!("{:04x}", hasher.finish() & 0xFFFF);
 
-            let safe_session = session_name.replace(['/', '\\', '\0'], "_").replace("..", "_");
+            let safe_session = session_name
+                .replace(['/', '\\', '\0'], "_")
+                .replace("..", "_");
             let safe_pane = pane_id.replace(['/', '\\', '\0', '%'], "_");
             let filename = format!("{safe_session}_{safe_pane}_{epoch}_{client_id}.cast");
             let cast_path = date_dir.join(&filename);

@@ -195,10 +195,7 @@ async fn handle_download_quic(
     }
 }
 
-async fn download_file_quic(
-    mut send: quinn::SendStream,
-    remote_path: &str,
-) -> anyhow::Result<()> {
+async fn download_file_quic(mut send: quinn::SendStream, remote_path: &str) -> anyhow::Result<()> {
     let mut file = tokio::fs::File::open(remote_path).await?;
     let file_size = file.metadata().await?.len();
 
@@ -225,10 +222,7 @@ async fn download_file_quic(
     Ok(())
 }
 
-async fn download_dir_quic(
-    mut send: quinn::SendStream,
-    remote_path: &str,
-) -> anyhow::Result<()> {
+async fn download_dir_quic(mut send: quinn::SendStream, remote_path: &str) -> anyhow::Result<()> {
     let base = std::path::Path::new(remote_path);
     let mut files: Vec<(std::path::PathBuf, String)> = Vec::new();
     collect_remote_files(base, base, &mut files, 0).await?;

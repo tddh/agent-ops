@@ -142,7 +142,9 @@ async fn sync_host(
 
         // Use the absolute path returned by the bridge if available;
         // fall back to relative path for older bridges.
-        let remote_path = file_info["path"].as_str().filter(|p| !p.is_empty())
+        let remote_path = file_info["path"]
+            .as_str()
+            .filter(|p| !p.is_empty())
             .map(String::from)
             .unwrap_or_else(|| format!("recordings/{}/{}", date, file_name));
         match download_recording(host, ca_cert_path, &remote_path).await {
