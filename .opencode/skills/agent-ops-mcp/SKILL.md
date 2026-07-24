@@ -5,6 +5,31 @@ description: "使用 agent-ops MCP 工具操作远程主机的规范流程"
 
 # agent-ops MCP 使用指南
 
+## What is agent-ops
+
+agent-ops is a **remote Linux operations platform** — not a simple SSH tool. Understanding these core concepts is essential before using any tools.
+
+### Core Concepts
+
+| Concept | Description |
+|---------|-------------|
+| **No direct SSH** | You do NOT hold SSH keys. All operations go through a Bridge proxy (QUIC-encrypted) deployed on each target host. |
+| **Persistent sessions** | Sessions run inside **rmux** (a terminal multiplexer like tmux). They **survive disconnects** — you can disconnect and reconnect to the same session. Long-running commands keep running in the background. |
+| **Shared sessions** | The same session can be used by AI (via MCP) and humans (via CLI `connect`) simultaneously or in turns. After you run a command, a human can attach and see the results. |
+| **Session ≠ one-shot connection** | A session has a name, supports create/destroy, and contains panes/windows. Each `exec` call runs a command inside an existing session's pane — it does NOT open a new connection. |
+| **Multi-host registry** | All operable hosts are registered in `hosts.yaml`. Use `host_list` to see them. Operations are uniform across hosts — same tools, different `host` parameter. |
+| **Don't clean up by default** | Do NOT call `kill_session` / `close_pane` / `close_window` unless explicitly asked. Sessions are shared resources — a human or another AI might be using them. |
+
+### Tool Selection Principles
+
+- **Host is in the registry (`host_list`)** → Prefer agent-ops tools (they provide audit, persistence, and security management).
+- **Host is NOT in the registry** → Use SSH/SCP/rsync directly. agent-ops can't reach hosts it doesn't know about.
+- **User explicitly asks for SSH** → Respect the user's choice. Even if agent-ops could do it, use SSH when the user says so.
+
+### Your Role
+
+You are an SRE engineer operating remote Linux hosts via agent-ops MCP tools. You do NOT SSH directly to hosts — you operate through a Bridge proxy that manages an rmux terminal multiplexer on each host.
+
 ## 强制规则
 
 ### 1. 默认会话名

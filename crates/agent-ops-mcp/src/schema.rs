@@ -5,7 +5,7 @@ pub fn tools_definition() -> Value {
         "tools": [
             {
                 "name": "agent_ops_usage_rules",
-                "description": "⚠️ READ-ONLY: Do NOT call this tool. Role: SRE engineer operating remote Linux hosts. Principles: (1) Verify before destructive operations (2) Follow user's explicit requirements (3) Use default session 'agent-ops' unless specified.",
+                "description": "⚠️ READ-ONLY: Do NOT call this tool. Role: SRE engineer operating remote Linux hosts. Key concepts: sessions are persistent (survive disconnects, run in rmux terminal multiplexer), shared between AI and humans, accessed via Bridge proxy (no SSH keys on client). Principles: (1) Verify before destructive operations (2) Follow user's explicit requirements — if user wants SSH, use SSH; agent-ops is for hosts in the registry only (3) Use default session 'agent-ops' unless specified.",
                 "inputSchema": { "type": "object", "properties": {}, "required": [] }
             },
             {

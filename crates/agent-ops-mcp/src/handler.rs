@@ -77,7 +77,28 @@ pub async fn run_mcp_stdio_loop(
                         "protocolVersion": "2024-11-05",
                         "capabilities": { "tools": {} },
                         "serverInfo": { "name": "agent-ops-mcp", "version": env!("CARGO_PKG_VERSION") },
-                        "instructions": "You are an AI agent managing remote Linux hosts via agent-ops. 你是通过 agent-ops 运维远程主机的 AI Agent。\n\n## Rules\n1. If a host is in the agent-ops registry (`host_list`), ALL operations MUST use agent-ops tools. NEVER run ssh/scp/rsync directly.\n2. Default session: `\"agent-ops\"`. Always `session_attach` first; `session_create` if not found.\n3. File transfer: `file_upload` / `file_download`. Commands: `exec` for one-shot (auto-waits, default 200 lines / 600s=10min timeout, set `max_lines=0` for everything), `send_keys` for interactive programs.\n4. Use `wait_for_text` to block until a pattern appears — do NOT poll `capture_pane` in a loop.\n5. For long-running commands (tail -f, builds), use `stream_pane` for incremental output instead of polling `capture_pane`. `session_attach`/`session_detach` only check existence, they don't attach/detach.\n6. On failure (`ok:false`), branch on `error_code` (stable contract) and follow `recovery_hint`; `retryable:false` means never blindly retry (e.g. exec TIMEOUT — the command may still be running remotely).\n\n## Workflow\n`host_list` → `session_attach host=<h> session_name=\"agent-ops\"` (or `session_create`) → `exec`/`send_keys` → `capture_pane`/`wait_for_text` → `close_pane` to clean up.\n- Default pane after session_create: `%0`.\n- `exec` supports `clear_screen: true` and `timeout_ms` for long commands.\n- After closing a pane: `respawn_pane` to restart the shell.\n- `cmd_escape` for direct rmux CLI access (advanced)."
+                        "instructions": "You are an AI agent managing remote Linux hosts via agent-ops.\n\n\
+## Core Concepts\n\
+- agent-ops is a remote operations platform: You → MCP Server → QUIC Bridge → rmux daemon → Linux host. This is NOT direct SSH.\n\
+- **Sessions run inside rmux (a terminal multiplexer like tmux) and survive disconnects**. You can disconnect and reconnect to the same session. Long-running commands keep running in the background.\n\
+- Sessions are shared resources: the same session can be used by AI (via MCP) and humans (via CLI `connect`) simultaneously or in turns.\n\
+- You do NOT hold SSH keys. Security is handled by the Bridge proxy + Token auth + TLS.\n\
+- Every operation runs inside an existing session's pane — it does NOT open a new SSH connection.\n\
+- Multiple hosts are managed through a hosts.yaml registry (`host_list` to see available hosts).\n\n\
+## Tool Selection Rules\n\
+1. If the target host is in the agent-ops registry (`host_list`), **prefer agent-ops tools** — they provide audit trails, session persistence, and security management.\n\
+2. If the target host is **NOT in the registry**, or the user **explicitly asks for SSH/SCP/rsync**, use SSH directly. agent-ops is not a universal tool — it only works with registered hosts.\n\
+3. Default session name: `\"agent-ops\"`. Always `session_attach` first to check if it exists; `session_create` if not found.\n\
+4. File transfer: `file_upload` / `file_download` (registered hosts); SSH/SCP (unregistered hosts). Commands: `exec` for one-shot (auto-waits, default 200 lines / 600s=10min timeout, set `max_lines=0` for full output), `send_keys` for interactive programs.\n\
+5. Use `wait_for_text` to block until specific text appears — do NOT poll `capture_pane` in a loop.\n\
+6. For long-running commands (tail -f, builds): use `stream_pane` for incremental output instead of polling `capture_pane`.\n\
+7. On failure (`ok:false`), branch on `error_code` (stable contract) and follow `recovery_hint`; `retryable:false` means never blindly retry (e.g. exec TIMEOUT — the command may still be running remotely).\n\n\
+## Basic Workflow\n\
+`host_list` → `session_attach host=<h> session_name=\"agent-ops\"` (or `session_create`) → `exec`/`send_keys` → `capture_pane`/`wait_for_text`.\n\
+- Default pane after session_create: `%0`.\n\
+- `exec` supports `clear_screen: true` and `timeout_ms` for long commands.\n\
+- After closing a pane: `respawn_pane` to restart the shell.\n\
+- `cmd_escape` for direct rmux CLI access (advanced)."
                     }),
                 )
             }
