@@ -33,14 +33,6 @@ build-bridge:
 build-mcp:
     cargo build -p agent-ops-mcp --release
 
-# ─── 运行 ────────────────────────────
-run-bridge token:
-    BRIDGE_AUTH_TOKEN="{{token}}" cargo run -p rmux-bridge -- \
-        --listen-addr 127.0.0.1:19778 --auth-token "{{token}}"
-
-run-mcp hosts='config/hosts.yaml':
-    cargo run -p agent-ops-mcp -- --hosts-file {{hosts}}
-
 # ─── 测试 ────────────────────────────
 test:
     cargo test --workspace

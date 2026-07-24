@@ -49,7 +49,7 @@ jobs:
           cp target/x86_64-unknown-linux-musl/release/rmux-bridge pkg/
           cp config/hosts.example.yaml config/mcp-config.example.json config/rmux.conf pkg/config/
           cp deploy/install-bridge.sh deploy/install-daemon.sh pkg/deploy/
-          cp deploy/rmux-bridge.service deploy/rmux-daemon.service pkg/deploy/
+          cp deploy/rmux-daemon.service pkg/deploy/
           cp deploy/generate-certs.sh pkg/deploy/
           cp .opencode/skills/agent-ops-mcp/SKILL.md pkg/.opencode/skills/agent-ops-mcp/
           cp README.md pkg/
